@@ -99,6 +99,26 @@ func TestService_CutNowWithoutGrantKeepsTheBet(t *testing.T) {
 	require.False(t, f.host.Archived("t1"))
 }
 
+// A "Cut now" whose reply timed out can still archive the task on the Host.
+// The bet must not stay active on an archived task until the deadline.
+func TestService_ArchivedTaskClosesItsActiveBet(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1", "t2", "t3")
+	f.host.ArchiveDirectly("t1")
+
+	bet := f.snapshot(t).Active.Bet("t1")
+	require.Equal(t, BetCut, bet.Status)
+	require.True(t, bet.ClosedAt.Equal(t0))
+	require.Equal(t, BetCut, f.storedActive(t).Bet("t1").Status, "the reconciliation is saved")
+
+	f.host.ArchiveDirectly("t2")
+	require.ErrorIs(t, f.svc.MarkShipped(ctx, "ws1", "t2"), ErrBetNotActive)
+	require.Equal(t, BetCut, f.storedActive(t).Bet("t2").Status, "saved even when the action fails")
+	require.Equal(t, BetActive, f.storedActive(t).Bet("t3").Status)
+	require.Zero(t, f.host.ArchiveCalls)
+}
+
 func TestService_MarkShippedDoesNotArchive(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)

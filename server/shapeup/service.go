@@ -67,6 +67,9 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 	if err != nil {
 		return Snapshot{}, err
 	}
+	if err := s.closeArchivedBets(ctx, workspaceID, active); err != nil {
+		return Snapshot{}, err
+	}
 	history, err := s.store.History(ctx, workspaceID)
 	if err != nil {
 		return Snapshot{}, err
@@ -204,8 +207,37 @@ func (s *Service) withActive(ctx context.Context, workspaceID string, fn func(*C
 	if c == nil {
 		return ErrNoActiveCycle
 	}
+	if err := s.closeArchivedBets(ctx, workspaceID, c); err != nil {
+		return err
+	}
 	if err := fn(c); err != nil {
 		return err
+	}
+	return s.store.SaveActive(ctx, workspaceID, c)
+}
+
+// closeArchivedBets marks cut every active bet whose task is already archived
+// and saves the cycle. This happens when a "Cut now" reply timed out after the
+// Host had archived the task, or when someone archived it by hand.
+func (s *Service) closeArchivedBets(ctx context.Context, workspaceID string, c *Cycle) error {
+	if c == nil || len(c.ActiveBets()) == 0 {
+		return nil
+	}
+	tasks, err := s.listTasks(ctx, workspaceID, true)
+	if err != nil {
+		return err
+	}
+	changed := false
+	for _, bet := range c.ActiveBets() {
+		if t := tasks[bet.TaskID]; t != nil && t.ArchivedAt != nil {
+			if err := c.Cut(bet.TaskID, s.now()); err != nil {
+				return err
+			}
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
 	}
 	return s.store.SaveActive(ctx, workspaceID, c)
 }

@@ -74,6 +74,9 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 	if err != nil {
 		return Snapshot{}, err
 	}
+	if len(history) > MaxHistory {
+		history = history[:MaxHistory]
+	}
 	snap := Snapshot{Now: now.UTC(), Active: active, History: history}
 	if active != nil {
 		snap.Overdue = active.Overdue(now)

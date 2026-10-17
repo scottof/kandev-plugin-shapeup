@@ -35,6 +35,10 @@ const (
 const (
 	MaxNameLength = 80
 	MaxCycleDays  = 90
+	// MaxBetsPerCycle and MaxHistory keep the state.get reply, which the page
+	// polls, well under the Host's action response limit.
+	MaxBetsPerCycle = 50
+	MaxHistory      = 12
 )
 
 // Cycle is a fixed time box. End is the deadline the circuit breaker
@@ -102,6 +106,7 @@ var (
 	ErrCycleOverdue    = &Error{KindConflict, "The cycle deadline has passed. Start a new cycle."}
 	ErrCycleStuck      = &Error{KindConflict, "The last cycle is past its deadline but some bets could not be cut yet. Fix the problem shown on its bets first."}
 	ErrDuplicateBet    = &Error{KindConflict, "This task already has a bet in this cycle."}
+	ErrTooManyBets     = &Error{KindConflict, "This cycle already has 50 bets, the most a cycle can hold."}
 	ErrBetNotActive    = &Error{KindConflict, "This bet is already closed."}
 	ErrActiveBets      = &Error{KindConflict, "Some bets are still active."}
 	ErrBetNotFound     = &Error{KindNotFound, "No bet for this task in the active cycle."}

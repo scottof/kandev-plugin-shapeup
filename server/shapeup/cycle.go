@@ -55,6 +55,9 @@ func (c *Cycle) PlaceBet(taskID, title string, appetite Appetite, now time.Time)
 			return ErrDuplicateBet
 		}
 	}
+	if len(c.Bets) >= MaxBetsPerCycle {
+		return ErrTooManyBets
+	}
 	c.Bets = append(c.Bets, Bet{
 		TaskID:    taskID,
 		TaskTitle: title,

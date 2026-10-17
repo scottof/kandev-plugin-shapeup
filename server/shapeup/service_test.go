@@ -2,6 +2,7 @@ package shapeup
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -154,4 +155,23 @@ func TestService_Candidates(t *testing.T) {
 		{TaskID: "c", Title: "Alpha idea", StepName: "Raw ideas"},
 		{TaskID: "a", Title: "Zeta idea", StepName: "Raw ideas"},
 	}, got)
+}
+
+// The page polls state.get, so its reply must not grow with every cycle.
+func TestService_SnapshotReturnsOnlyRecentHistory(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	store := NewStore(f.host)
+	for i := range MaxHistory + 2 {
+		start := t0.Add(time.Duration(i) * 24 * time.Hour)
+		c, err := StartCycle(nil, fmt.Sprintf("old%02d", i), "Old", 1, start)
+		require.NoError(t, err)
+		require.NoError(t, c.Close(c.End))
+		require.NoError(t, store.Archive(ctx, "ws1", c))
+	}
+
+	history := f.snapshot(t).History
+	require.Len(t, history, MaxHistory)
+	require.Equal(t, fmt.Sprintf("old%02d", MaxHistory+1), history[0].ID, "newest first")
+	require.Equal(t, "old02", history[MaxHistory-1].ID)
 }

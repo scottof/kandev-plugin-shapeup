@@ -2,6 +2,7 @@ package shapeup
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -86,6 +87,14 @@ func TestPlaceBet(t *testing.T) {
 			setup: func(c *Cycle) {
 				require.NoError(t, c.PlaceBet("t1", "T1", AppetiteBig, t0))
 				require.NoError(t, c.Cut("t1", t0))
+			},
+		},
+		{
+			name: "cycle is full", task: "t1", appetite: AppetiteSmall, at: t0, wantErr: ErrTooManyBets,
+			setup: func(c *Cycle) {
+				for i := range MaxBetsPerCycle {
+					require.NoError(t, c.PlaceBet(fmt.Sprintf("full-%d", i), "T", AppetiteSmall, t0))
+				}
 			},
 		},
 		{name: "overdue cycle", task: "t1", appetite: AppetiteSmall, at: t0.Add(14 * 24 * time.Hour), wantErr: ErrCycleOverdue},

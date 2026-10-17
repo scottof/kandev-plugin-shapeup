@@ -267,16 +267,30 @@ func TestBreaker_ChecksEveryIndexedWorkspace(t *testing.T) {
 // a caller close to its own deadline does not abort an archive midway.
 func TestBreaker_EachArchiveHasItsOwnTimeout(t *testing.T) {
 	f := newFixture(t)
-	f.cycleWithBets(t, "t1")
+	f.cycleWithBets(t, "t1", "t2")
 	f.pastDeadline()
 
+	const delay = 100 * time.Millisecond
+	var deadlines []time.Time
+	f.host.BeforeArchive = func(ctx context.Context, _ string) {
+		deadline, _ := ctx.Deadline()
+		deadlines = append(deadlines, deadline)
+		if len(deadlines) == 1 {
+			time.Sleep(delay) // the first archive is slow
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	start := time.Now()
 	require.NoError(t, f.svc.RunBreaker(ctx))
 
 	require.True(t, f.host.Archived("t1"))
-	require.WithinRange(t, f.host.ArchiveDeadline, start.Add(ArchiveTimeout-time.Second), time.Now().Add(ArchiveTimeout))
+	require.True(t, f.host.Archived("t2"))
+	require.Len(t, deadlines, 2)
+	for _, d := range deadlines {
+		require.WithinRange(t, d, start.Add(ArchiveTimeout-time.Second), time.Now().Add(ArchiveTimeout))
+	}
+	require.GreaterOrEqual(t, deadlines[1].Sub(deadlines[0]), delay, "the second archive gets a fresh budget")
 }
 
 // The caller holds the service lock for the whole run, so once its deadline

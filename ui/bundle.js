@@ -166,7 +166,7 @@ function makeBettingTablePage(host) {
     );
   }
 
-  function BetsTable({ cycle, busy, onShip, onCut, nowMs }) {
+  function BetsTable({ cycle, busy, overdue, onShip, onCut, nowMs }) {
     const [confirming, setConfirming] = React.useState("");
     if (!cycle.bets || cycle.bets.length === 0) {
       return h(
@@ -219,17 +219,20 @@ function makeBettingTablePage(host) {
                 : h(
                     "div",
                     { className: "flex justify-end gap-2" },
-                    h(
-                      Button,
-                      {
-                        type: "button",
-                        size: "sm",
-                        variant: "outline",
-                        disabled: busy,
-                        onClick: () => onShip(bet.task_id),
-                      },
-                      "Mark shipped",
-                    ),
+                    // Past the deadline only a cut is possible.
+                    overdue
+                      ? null
+                      : h(
+                          Button,
+                          {
+                            type: "button",
+                            size: "sm",
+                            variant: "outline",
+                            disabled: busy,
+                            onClick: () => onShip(bet.task_id),
+                          },
+                          "Mark shipped",
+                        ),
                     confirming === bet.task_id
                       ? h(
                           Button,
@@ -345,10 +348,10 @@ function makeBettingTablePage(host) {
               id: "shapeup-place-bet",
               type: "button",
               disabled: busy || !taskId,
-              onClick: () => {
-                onPlace({ task_id: taskId, appetite });
-                setTaskId("");
-              },
+              onClick: () =>
+                onPlace({ task_id: taskId, appetite }).then((placed) => {
+                  if (placed) setTaskId("");
+                }),
             },
             "Place bet",
           ),
@@ -433,17 +436,24 @@ function makeBettingTablePage(host) {
       };
     }, [workspaceId, reloadKey]);
 
+    // run resolves to true when the action succeeded for the workspace the
+    // page still shows.
     const run = (key, body, success) => {
       const requested = workspaceId;
+      const stale = () => currentWorkspace.current !== requested;
       setBusy(true);
-      invoke(key, requested, body)
+      return invoke(key, requested, body)
         .then((data) => {
-          if (currentWorkspace.current !== requested) return;
+          if (stale()) return false;
           setState({ loading: false, error: "", data });
           setRefreshKey((k) => k + 1);
           if (success) toast.success(success);
+          return true;
         })
-        .catch((err) => toast.error(errorMessage(err)))
+        .catch((err) => {
+          if (!stale()) toast.error(errorMessage(err));
+          return false;
+        })
         .finally(() => setBusy(false));
     };
 
@@ -518,6 +528,7 @@ function makeBettingTablePage(host) {
               h(BetsTable, {
                 cycle: active,
                 busy,
+                overdue: state.data.overdue,
                 nowMs,
                 onShip: (taskId) => run("bet.ship", { task_id: taskId }, "Marked as shipped"),
                 onCut: (taskId) => run("bet.cut", { task_id: taskId }, "Bet cut and task archived"),

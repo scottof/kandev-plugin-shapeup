@@ -10,18 +10,64 @@ function element(type, props, ...children) {
 
 // A minimal stand-in for host.React: state never changes (setter calls are
 // recorded), effects run at once and their cleanups are collected so timers
-// do not outlive the test.
-function fakeReact(cleanups, setCalls) {
+// do not outlive the test. initialStates, when given, replaces the initial
+// value of the n-th useState call; refs collects every useRef object.
+function fakeReact(cleanups, setCalls, initialStates = {}, refs = []) {
+  let stateIndex = 0;
   return {
-    useState: (init) => [typeof init === "function" ? init() : init, (v) => setCalls.push(v)],
+    useState: (init) => {
+      const i = stateIndex++;
+      const value = i in initialStates ? initialStates[i] : typeof init === "function" ? init() : init;
+      return [value, (v) => setCalls.push(v)];
+    },
     useEffect: (fn) => {
       const cleanup = fn();
       if (typeof cleanup === "function") cleanups.push(cleanup);
     },
     useCallback: (fn) => fn,
-    useRef: (value) => ({ current: value }),
+    useRef: (value) => {
+      const ref = { current: value };
+      refs.push(ref);
+      return ref;
+    },
   };
 }
+
+// find returns the first element in a rendered tree that matches pred.
+function find(node, pred) {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const hit = find(child, pred);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (!node || typeof node !== "object") return null;
+  if (pred(node)) return node;
+  return find(node.children, pred);
+}
+
+function hasText(node, text) {
+  if (typeof node === "string") return node === text;
+  if (Array.isArray(node)) return node.some((child) => hasText(child, text));
+  return Boolean(node && typeof node === "object" && hasText(node.children, text));
+}
+
+const byName = (name) => (node) => typeof node.type === "function" && node.type.name === name;
+
+const ACTIVE_SNAPSHOT = {
+  now: "2026-10-01T09:00:00Z",
+  overdue: false,
+  history: [],
+  active: {
+    id: "c1",
+    name: "October",
+    start: "2026-10-01T09:00:00Z",
+    end: "2026-10-15T09:00:00Z",
+    status: "active",
+    bets: [{ task_id: "t1", task_title: "Search", appetite: "small", status: "active" }],
+  },
+};
 
 async function loadPlugin() {
   let pluginId;
@@ -39,14 +85,26 @@ async function loadPlugin() {
   return { mod, pluginId, definition };
 }
 
-function makeHost({ workspaceId = "ws1", calls = [], cleanups = [], setCalls = [], reply } = {}) {
+function makeHost({
+  workspaceId = "ws1",
+  calls = [],
+  cleanups = [],
+  setCalls = [],
+  toasts = [],
+  initialStates,
+  refs,
+  reply,
+} = {}) {
   const ui = new Proxy({}, { get: (_, name) => String(name) });
   return {
     jsx: element,
-    React: fakeReact(cleanups, setCalls),
+    React: fakeReact(cleanups, setCalls, initialStates, refs),
     ui,
     utils: { formatRelativeTime: (iso) => `relative(${iso})`, cn: (...c) => c.join(" ") },
-    toast: { success() {}, error() {} },
+    toast: {
+      success: (msg) => toasts.push(["success", msg]),
+      error: (msg) => toasts.push(["error", msg]),
+    },
     navigate() {},
     context: {
       getActiveWorkspaceId: () => workspaceId,
@@ -137,6 +195,85 @@ test("a refresh that resolves after the page moved on is dropped", async () => {
     globalThis.clearInterval = realClearInterval;
   }
 });
+
+// The page's useState calls, in order: the active workspace, the page state,
+// busy, the candidates refresh key and the reload key.
+const LOADED = { 1: { loading: false, error: "", data: ACTIVE_SNAPSHOT } };
+
+function settle() {
+  return new Promise((r) => setTimeout(r, 0));
+}
+
+for (const outcome of ["resolves", "rejects"]) {
+  test(`a mutation that ${outcome} after a workspace switch is dropped`, async () => {
+    const { definition } = await loadPlugin();
+    const cleanups = [];
+    const setCalls = [];
+    const toasts = [];
+    const refs = [];
+    let settleCut;
+    const host = makeHost({
+      cleanups,
+      setCalls,
+      toasts,
+      refs,
+      initialStates: LOADED,
+      reply: (key) =>
+        key === "bet.cut"
+          ? new Promise((resolve, reject) => {
+              settleCut = outcome === "resolves" ? () => resolve(ACTIVE_SNAPSHOT) : () => reject({ body: { error: "Nope" } });
+            })
+          : new Promise(() => {}),
+    });
+    const { routes } = initialize(definition, host);
+
+    const tree = routes[0].component();
+    cleanups.forEach((fn) => fn());
+    find(tree, byName("BetsTable")).props.onCut("t1");
+    refs[0].current = "ws2"; // the viewer switched workspace meanwhile
+    const before = setCalls.length;
+    settleCut();
+    await settle();
+
+    assert.deepEqual(toasts, [], "no toast about the previous workspace");
+    assert.deepEqual(setCalls.slice(before), [false], "only busy is reset");
+  });
+}
+
+test("Mark shipped is hidden once the cycle is overdue", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const overdue = { ...ACTIVE_SNAPSHOT, overdue: true };
+  const host = makeHost({ cleanups, initialStates: { 1: { loading: false, error: "", data: overdue } } });
+  const { routes } = initialize(definition, host);
+
+  const tree = routes[0].component();
+  cleanups.forEach((fn) => fn());
+  const table = find(tree, byName("BetsTable"));
+  assert.equal(hasText(table.type(table.props), "Mark shipped"), false);
+  assert.equal(hasText(table.type({ ...table.props, overdue: false }), "Mark shipped"), true);
+});
+
+for (const ok of [true, false]) {
+  test(`the task picker is ${ok ? "cleared after a placed" : "kept after a failed"} bet`, async () => {
+    const { definition } = await loadPlugin();
+    const cleanups = [];
+    const setCalls = [];
+    const host = makeHost({ cleanups, setCalls, initialStates: LOADED });
+    const { routes } = initialize(definition, host);
+
+    const tree = routes[0].component();
+    cleanups.forEach((fn) => fn());
+    const form = find(tree, byName("PlaceBetForm"));
+    const rendered = form.type({ ...form.props, onPlace: () => Promise.resolve(ok) });
+    cleanups.forEach((fn) => fn());
+    const before = setCalls.length;
+    find(rendered, (n) => n.props && n.props.id === "shapeup-place-bet").props.onClick();
+    await settle();
+
+    assert.equal(setCalls.slice(before).includes(""), ok);
+  });
+}
 
 test("the page asks for a workspace instead of calling the backend without one", async () => {
   const { definition } = await loadPlugin();

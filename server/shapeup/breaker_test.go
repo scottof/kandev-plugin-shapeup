@@ -279,6 +279,37 @@ func TestBreaker_EachArchiveHasItsOwnTimeout(t *testing.T) {
 	require.WithinRange(t, f.host.ArchiveDeadline, start.Add(ArchiveTimeout-time.Second), time.Now().Add(ArchiveTimeout))
 }
 
+// The caller holds the service lock for the whole run, so once its deadline
+// passes no new archive may start: page actions waiting on the lock would
+// otherwise wait one archive budget per bet. What was cut is still saved.
+func TestBreaker_StopsStartingArchivesAfterTheCallerDeadline(t *testing.T) {
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1", "t2")
+	f.pastDeadline()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	var started []string
+	f.host.BeforeArchive = func(_ context.Context, taskID string) {
+		started = append(started, taskID)
+		<-ctx.Done() // the archive outlives the caller
+	}
+	require.NoError(t, f.svc.RunBreaker(ctx))
+
+	require.Equal(t, []string{"t1"}, started, "no archive starts after the deadline")
+	require.True(t, f.host.Archived("t1"))
+	require.False(t, f.host.Archived("t2"))
+	active := f.storedActive(t)
+	require.NotNil(t, active, "the cycle stays open for the bet not reached")
+	require.Equal(t, BetCut, active.Bet("t1").Status, "the finished cut is saved")
+	require.Equal(t, BetActive, active.Bet("t2").Status)
+
+	f.host.BeforeArchive = nil
+	require.NoError(t, f.svc.RunBreaker(context.Background()))
+	require.True(t, f.host.Archived("t2"))
+	require.Nil(t, f.storedActive(t))
+}
+
 // The ticker takes the lock per workspace, so a page action waits for one
 // workspace's cut at most, not for the whole run.
 func TestBreaker_ReleasesTheLockBetweenWorkspaces(t *testing.T) {

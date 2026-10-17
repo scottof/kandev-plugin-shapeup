@@ -19,6 +19,8 @@ const (
 	// stateTimeout bounds the state and task reads and writes of one
 	// workspace run, outside the archive calls.
 	stateTimeout = 30 * time.Second
+	// saveTimeout bounds the save that ends a breaker run.
+	saveTimeout = 5 * time.Second
 )
 
 // ErrArchiveFailed wraps the reason a task could not be archived.
@@ -88,6 +90,11 @@ func (s *Service) breakWorkspace(ctx context.Context, workspaceID string) error 
 			return err
 		}
 		for _, bet := range active {
+			// The caller holds s.mu, and each archive may take its full budget:
+			// past the caller's deadline the bets left wait for the next run.
+			if ctx.Err() != nil {
+				break
+			}
 			if reason := s.archive(ctx, workspaceID, c.ID, tasks[bet.TaskID]); reason != "" {
 				c.Bet(bet.TaskID).Error = reason
 				continue
@@ -97,13 +104,17 @@ func (s *Service) breakWorkspace(ctx context.Context, workspaceID string) error 
 			}
 		}
 	}
+	// Saved even when the caller gave up, so finished cuts and the reasons of
+	// failed ones are never lost.
+	saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), saveTimeout)
+	defer cancel()
 	if len(c.ActiveBets()) > 0 {
-		return s.store.SaveActive(ctx, workspaceID, c)
+		return s.store.SaveActive(saveCtx, workspaceID, c)
 	}
 	if err := c.Close(now); err != nil {
 		return err
 	}
-	return s.store.Archive(ctx, workspaceID, c)
+	return s.store.Archive(saveCtx, workspaceID, c)
 }
 
 // archive archives task through the exact Host v2 command and returns an

@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Starting a cycle and cutting a bet archive other people's tasks, so only a
-// kandev administrator may call them. The host enforces access: admin before
+// Every mutating action decides which tasks get archived (a bet is cut at the
+// deadline unless it ships), so only a kandev administrator may call them. The host enforces access: admin before
 // the plugin runs, and only from kandev 0.91.1 on.
 func TestManifest_ActionAccess(t *testing.T) {
 	raw, err := os.ReadFile("../manifest.yaml")
@@ -34,8 +34,8 @@ func TestManifest_ActionAccess(t *testing.T) {
 		actionStateGet:   "authenticated",
 		actionCandidates: "authenticated",
 		actionCycleStart: "admin",
-		actionBetPlace:   "authenticated",
-		actionBetShip:    "authenticated",
+		actionBetPlace:   "admin",
+		actionBetShip:    "admin",
 		actionBetCut:     "admin",
 	}, access)
 }

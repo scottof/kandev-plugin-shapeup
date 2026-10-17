@@ -62,10 +62,10 @@ cuts the bets.
 The manifest declares only what the plugin uses: `state`, `api_read: tasks,
 workflows` and `api_write: tasks`.
 
-Starting a cycle and **Cut now** archive tasks, so they are `access: admin`
-actions: only a kandev administrator can use them, and kandev answers 403 to
-other members. Any signed-in member can view the betting table, place a bet and
-mark a bet shipped.
+Every action that changes a cycle decides which tasks get archived, so starting
+a cycle, placing a bet, marking a bet shipped and **Cut now** are
+`access: admin` actions: only a kandev administrator can use them, and kandev
+answers 403 to other members. Any signed-in member can view the betting table.
 
 ## Import the workflow
 

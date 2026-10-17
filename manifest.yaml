@@ -36,7 +36,8 @@ capabilities:
   api_write: ["tasks"]
 
 # Browser actions for the betting table page. The host authenticates the
-# caller and verifies the workspace before calling HandleAction.
+# caller and verifies the workspace before calling HandleAction. Every
+# mutating action decides which tasks get archived, so they are admin only.
 actions:
   - key: "state.get"
     scope: "workspace"
@@ -52,11 +53,11 @@ actions:
     max_body_bytes: 1024
   - key: "bet.place"
     scope: "workspace"
-    access: "authenticated"
+    access: "admin"
     max_body_bytes: 1024
   - key: "bet.ship"
     scope: "workspace"
-    access: "authenticated"
+    access: "admin"
     max_body_bytes: 1024
   - key: "bet.cut"
     scope: "workspace"

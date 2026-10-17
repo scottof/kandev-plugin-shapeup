@@ -12,7 +12,8 @@
   archived, then the cycle closes. Runs every minute, at plugin start and
   before page actions. Needs the `host.v2.write:tasks` workspace grant.
   Each archive gets its own 25 second budget.
-- Only a kandev administrator can start a cycle or use Cut now.
+- Only a kandev administrator can start a cycle, place a bet, mark a bet
+  shipped or use Cut now. Other members can view the betting table.
 - A bet whose task is already archived (for example by a Cut now whose reply
   timed out) is shown as cut.
 - A cycle holds at most 50 bets, and the page shows the 12 most recent past

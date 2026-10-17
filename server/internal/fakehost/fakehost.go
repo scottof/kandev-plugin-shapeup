@@ -119,13 +119,13 @@ func (h *Host) SetRaw(scope, scopeID, key string, value map[string]any) {
 	h.state[stateKey(scope, scopeID, key)] = roundTrip(value)
 }
 
-func (h *Host) GetConfig(context.Context) (map[string]any, error)   { return map[string]any{}, nil }
+func (h *Host) GetConfig(context.Context) (map[string]any, error)    { return map[string]any{}, nil }
 func (h *Host) RevealSecret(context.Context, string) (string, error) { return "", nil }
 func (h *Host) GetSecret(context.Context, string) (string, bool, error) {
 	return "", false, nil
 }
-func (h *Host) SetSecret(context.Context, string, string) error          { return nil }
-func (h *Host) DeleteSecret(context.Context, string) error                { return nil }
+func (h *Host) SetSecret(context.Context, string, string) error         { return nil }
+func (h *Host) DeleteSecret(context.Context, string) error              { return nil }
 func (h *Host) EmitEvent(context.Context, string, map[string]any) error { return nil }
 
 // AddTask registers a live task. Its ResourceVersion changes on every write.

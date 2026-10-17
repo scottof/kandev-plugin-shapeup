@@ -3,6 +3,7 @@ package shapeup
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -101,6 +102,39 @@ func TestStore_ArchiveMovesCycleToHistory(t *testing.T) {
 	require.Len(t, history, 2)
 	require.Equal(t, "c2", history[0].ID, "newest first")
 	require.Equal(t, *first, history[1])
+}
+
+// Every state.get reads the whole history, so Archive keeps only the cycles
+// the page can show.
+func TestStore_ArchivePrunesOldHistory(t *testing.T) {
+	ctx := context.Background()
+	host := fakehost.New()
+	s := NewStore(host)
+	for i := range MaxHistory + 2 {
+		c, err := StartCycle(nil, fmt.Sprintf("old%02d", i), "Old", 1, t0.Add(time.Duration(i)*24*time.Hour))
+		require.NoError(t, err)
+		require.NoError(t, c.Close(c.End))
+		require.NoError(t, s.Archive(ctx, "ws1", c))
+	}
+	other, err := StartCycle(nil, "other", "Other", 1, t0)
+	require.NoError(t, err)
+	require.NoError(t, other.Close(other.End))
+	require.NoError(t, s.Archive(ctx, "ws2", other))
+
+	entries, err := host.ListState(ctx, "workspace", "ws1")
+	require.NoError(t, err)
+	var keys []string
+	for _, e := range entries {
+		keys = append(keys, e.Key)
+	}
+	require.Len(t, keys, MaxHistory)
+	require.NotContains(t, keys, "cycle:old00")
+	require.NotContains(t, keys, "cycle:old01")
+	require.Contains(t, keys, fmt.Sprintf("cycle:old%02d", MaxHistory+1))
+
+	history, err := s.History(ctx, "ws2")
+	require.NoError(t, err)
+	require.Len(t, history, 1, "pruning stays inside the workspace")
 }
 
 func TestStore_ArchiveRejectsActiveCycle(t *testing.T) {

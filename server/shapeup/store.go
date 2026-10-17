@@ -73,6 +73,8 @@ func (s *Store) SaveActive(ctx context.Context, workspaceID string, c *Cycle) er
 // Archive stores a closed cycle in the history, then removes it as the
 // active one. The history write comes first, so a crash in between leaves the
 // cycle active and the next breaker run archives it again under the same key.
+// Cycles older than the newest MaxHistory are deleted: every state.get reads
+// the whole history and the page never shows them.
 func (s *Store) Archive(ctx context.Context, workspaceID string, c *Cycle) error {
 	if c.Status != CycleClosed {
 		return ErrCycleNotClosed
@@ -87,7 +89,19 @@ func (s *Store) Archive(ctx context.Context, workspaceID string, c *Cycle) error
 	if err := s.host.DeleteState(ctx, scopeWorkspace, workspaceID, keyActive); err != nil {
 		return fmt.Errorf("clearing active cycle: %w", err)
 	}
-	return s.updateIndex(ctx, workspaceID, false)
+	if err := s.updateIndex(ctx, workspaceID, false); err != nil {
+		return err
+	}
+	history, err := s.History(ctx, workspaceID)
+	if err != nil {
+		return err
+	}
+	for i := MaxHistory; i < len(history); i++ {
+		if err := s.host.DeleteState(ctx, scopeWorkspace, workspaceID, keyHistoryPrefix+history[i].ID); err != nil {
+			return fmt.Errorf("pruning cycle history: %w", err)
+		}
+	}
+	return nil
 }
 
 // History returns the closed cycles of a workspace, newest deadline first.

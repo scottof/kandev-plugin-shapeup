@@ -19,8 +19,8 @@
   The page tells a non-admin that only an administrator can make the change.
 - A bet whose task is already archived (for example by a Cut now whose reply
   timed out) is shown as cut.
-- A cycle holds at most 50 bets, and the page shows the 12 most recent past
-  cycles.
+- A cycle holds at most 50 bets. Only the 12 most recent past cycles are kept
+  and shown; older ones are deleted when a cycle closes.
 
 ### Changed
 

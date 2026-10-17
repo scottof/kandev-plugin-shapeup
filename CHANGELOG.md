@@ -2,6 +2,11 @@
 
 ## [0.1.1] - 2026-10-17
 
+### Added
+
+- The README and `docs/PITCH.md` link to the Shape Up book
+  (https://basecamp.com/shapeup).
+
 ### Fixed
 
 - If you start a change in workspace A, switch to workspace B, start another

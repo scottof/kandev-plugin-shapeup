@@ -1,8 +1,9 @@
 # kandev-plugin-shapeup
 
-Shape Up for [kandev](https://github.com/kdlbs/kandev): shaped pitches, a
-betting table, fixed cycles and a circuit breaker that cuts unfinished work at
-the deadline instead of extending it.
+[Shape Up](https://basecamp.com/shapeup) for
+[kandev](https://github.com/kdlbs/kandev): shaped pitches, a betting table,
+fixed cycles and a circuit breaker that cuts unfinished work at the deadline
+instead of extending it.
 
 - **Workflow template** (`workflows/shape-up.yaml`): Raw ideas, Shape (the
   agent writes a pitch in plan mode and stops), Betting table (human only),

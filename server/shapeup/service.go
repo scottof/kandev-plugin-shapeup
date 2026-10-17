@@ -70,7 +70,7 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 	return snap, nil
 }
 
-func (s *Service) StartCycle(ctx context.Context, workspaceID, name string, days int) (*Cycle, error) {
+func (s *Service) StartCycle(ctx context.Context, workspaceID, name string, days float64) (*Cycle, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.breakWorkspace(ctx, workspaceID); err != nil {

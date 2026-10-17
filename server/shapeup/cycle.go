@@ -7,8 +7,9 @@ import (
 )
 
 // StartCycle opens a new cycle of the given length. active is the current
-// cycle of the workspace, nil when there is none.
-func StartCycle(active *Cycle, id, name string, days int, now time.Time) (*Cycle, error) {
+// cycle of the workspace, nil when there is none. days may be a fraction, so a
+// smoke test can run a cycle of a few minutes; one minute is the minimum.
+func StartCycle(active *Cycle, id, name string, days float64, now time.Time) (*Cycle, error) {
 	if active != nil && active.Status == CycleActive {
 		return nil, ErrCycleActive
 	}
@@ -16,7 +17,11 @@ func StartCycle(active *Cycle, id, name string, days int, now time.Time) (*Cycle
 	if name == "" || utf8.RuneCountInString(name) > MaxNameLength {
 		return nil, ErrInvalidName
 	}
-	if days < 1 || days > MaxCycleDays {
+	if days > MaxCycleDays {
+		return nil, ErrInvalidLength
+	}
+	length := time.Duration(days * float64(24*time.Hour)).Round(time.Second)
+	if length < time.Minute {
 		return nil, ErrInvalidLength
 	}
 	start := now.UTC()
@@ -24,7 +29,7 @@ func StartCycle(active *Cycle, id, name string, days int, now time.Time) (*Cycle
 		ID:     id,
 		Name:   name,
 		Start:  start,
-		End:    start.Add(time.Duration(days) * 24 * time.Hour),
+		End:    start.Add(length),
 		Status: CycleActive,
 	}, nil
 }

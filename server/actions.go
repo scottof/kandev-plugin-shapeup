@@ -29,8 +29,8 @@ type betBody struct {
 }
 
 type cycleBody struct {
-	Name string `json:"name"`
-	Days int    `json:"days"`
+	Name string  `json:"name"`
+	Days float64 `json:"days"`
 }
 
 func (p *shapeupPlugin) HandleAction(ctx context.Context, req *pluginsdk.PluginActionRequest) (*pluginsdk.PluginActionResponse, error) {

@@ -93,7 +93,7 @@ func KindOf(err error) Kind {
 
 var (
 	ErrInvalidName     = &Error{KindInvalid, "Cycle name must be 1 to 80 characters."}
-	ErrInvalidLength   = &Error{KindInvalid, "Cycle length must be 1 to 90 days."}
+	ErrInvalidLength   = &Error{KindInvalid, "Cycle length must be between one minute and 90 days."}
 	ErrInvalidTask     = &Error{KindInvalid, "Pick a task to bet on."}
 	ErrInvalidAppetite = &Error{KindInvalid, "Appetite must be small or big."}
 	ErrCycleActive     = &Error{KindConflict, "A cycle is already active in this workspace."}

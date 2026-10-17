@@ -108,7 +108,7 @@ function makeBettingTablePage(host) {
     const [days, setDays] = React.useState("14");
     const submit = (event) => {
       event.preventDefault();
-      onStart({ name: name.trim(), days: Number.parseInt(days, 10) || 0 });
+      onStart({ name: name.trim(), days: Number.parseFloat(days) || 0 });
     };
     return h(
       Card,
@@ -148,8 +148,9 @@ function makeBettingTablePage(host) {
             h(Input, {
               id: "shapeup-cycle-days",
               type: "number",
-              min: 1,
+              min: 0.001,
               max: 90,
+              step: "any",
               className: "w-28",
               value: days,
               onChange: (e) => setDays(e.target.value),

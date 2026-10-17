@@ -23,15 +23,20 @@ func TestStartCycle(t *testing.T) {
 		name    string
 		active  *Cycle
 		cname   string
-		days    int
+		days    float64
+		length  time.Duration
 		wantErr error
 	}{
-		{name: "ok", cname: "Cycle 1", days: 14},
-		{name: "trims name", cname: "  Cycle 1  ", days: 1},
+		{name: "ok", cname: "Cycle 1", days: 14, length: 14 * 24 * time.Hour},
+		{name: "trims name", cname: "  Cycle 1  ", days: 1, length: 24 * time.Hour},
+		{name: "fraction of a day for a short smoke cycle", cname: "Cycle 1", days: 0.005, length: 7*time.Minute + 12*time.Second},
+		{name: "one minute is the shortest cycle", cname: "Cycle 1", days: 1.0 / 1440, length: time.Minute},
 		{name: "rejects while one is active", active: &Cycle{ID: "x", Status: CycleActive}, cname: "c", days: 7, wantErr: ErrCycleActive},
 		{name: "rejects empty name", cname: "   ", days: 7, wantErr: ErrInvalidName},
 		{name: "rejects long name", cname: string(make([]byte, MaxNameLength+1)), days: 7, wantErr: ErrInvalidName},
 		{name: "rejects zero days", cname: "c", days: 0, wantErr: ErrInvalidLength},
+		{name: "rejects under a minute", cname: "c", days: 0.0005, wantErr: ErrInvalidLength},
+		{name: "rejects negative days", cname: "c", days: -1, wantErr: ErrInvalidLength},
 		{name: "rejects too many days", cname: "c", days: MaxCycleDays + 1, wantErr: ErrInvalidLength},
 	}
 	for _, tc := range tests {
@@ -48,7 +53,7 @@ func TestStartCycle(t *testing.T) {
 			require.Equal(t, CycleActive, c.Status)
 			require.Equal(t, time.UTC, c.Start.Location(), "deadlines are stored in UTC")
 			require.True(t, c.Start.Equal(t0))
-			require.True(t, c.End.Equal(t0.Add(time.Duration(tc.days)*24*time.Hour)))
+			require.Equal(t, tc.length, c.End.Sub(c.Start))
 			require.Empty(t, c.Bets)
 		})
 	}

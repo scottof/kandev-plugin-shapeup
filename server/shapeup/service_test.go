@@ -195,3 +195,29 @@ func TestService_SnapshotSurvivesABreakerFailure(t *testing.T) {
 	require.Nil(t, f.snapshot(t).Active, "the next run finishes the cut")
 	require.Len(t, f.snapshot(t).History, 1)
 }
+
+// The workspace task list grows with every archived task, so each call reads
+// it once and shares it between the breaker, the archived-task check and the
+// action itself.
+func TestService_ListsTasksOncePerCall(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1", "t2")
+	f.host.AddTask("ws1", "wf1", "s1", "t3", "Third")
+
+	calls := func(run func() error) int {
+		t.Helper()
+		before := f.host.TaskLists
+		require.NoError(t, run())
+		return f.host.TaskLists - before
+	}
+	require.Equal(t, 1, calls(func() error { return f.svc.PlaceBet(ctx, "ws1", "t3", AppetiteSmall) }), "place bet")
+	require.Equal(t, 1, calls(func() error { return f.svc.CutNow(ctx, "ws1", "t1") }), "cut now")
+
+	f.host.Granted = false
+	f.pastDeadline()
+	require.Equal(t, 1, calls(func() error {
+		_, err := f.svc.Snapshot(ctx, "ws1")
+		return err
+	}), "snapshot of an overdue cycle")
+}

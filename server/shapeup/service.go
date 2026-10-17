@@ -66,7 +66,8 @@ type Candidate struct {
 func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.breakWorkspace(ctx, workspaceID); err != nil {
+	tasks := s.newTaskList(workspaceID)
+	if err := s.breakWorkspace(ctx, workspaceID, tasks); err != nil {
 		log.Printf("circuit breaker: workspace %s: %v", workspaceID, err)
 	}
 	now := s.now()
@@ -74,7 +75,7 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if err := s.closeArchivedBets(ctx, workspaceID, active); err != nil {
+	if err := s.closeArchivedBets(ctx, workspaceID, active, tasks); err != nil {
 		log.Printf("closing archived bets: workspace %s: %v", workspaceID, err)
 	}
 	history, err := s.store.History(ctx, workspaceID)
@@ -95,7 +96,7 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 func (s *Service) StartCycle(ctx context.Context, workspaceID, name string, days float64) (*Cycle, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.breakWorkspace(ctx, workspaceID); err != nil {
+	if err := s.breakWorkspace(ctx, workspaceID, s.newTaskList(workspaceID)); err != nil {
 		return nil, err
 	}
 	active, err := s.store.Active(ctx, workspaceID)
@@ -118,8 +119,8 @@ func (s *Service) StartCycle(ctx context.Context, workspaceID, name string, days
 }
 
 func (s *Service) PlaceBet(ctx context.Context, workspaceID, taskID string, appetite Appetite) error {
-	return s.withActive(ctx, workspaceID, func(c *Cycle) error {
-		task, err := s.liveTask(ctx, workspaceID, strings.TrimSpace(taskID))
+	return s.withActive(ctx, workspaceID, func(c *Cycle, tasks *taskList) error {
+		task, err := tasks.live(ctx, strings.TrimSpace(taskID))
 		if err != nil {
 			return err
 		}
@@ -128,7 +129,7 @@ func (s *Service) PlaceBet(ctx context.Context, workspaceID, taskID string, appe
 }
 
 func (s *Service) MarkShipped(ctx context.Context, workspaceID, taskID string) error {
-	return s.withActive(ctx, workspaceID, func(c *Cycle) error {
+	return s.withActive(ctx, workspaceID, func(c *Cycle, _ *taskList) error {
 		return c.MarkShipped(strings.TrimSpace(taskID), s.now())
 	})
 }
@@ -136,7 +137,7 @@ func (s *Service) MarkShipped(ctx context.Context, workspaceID, taskID string) e
 // CutNow archives the bet's task and marks the bet cut. When the archive
 // fails the bet stays active and the error says why.
 func (s *Service) CutNow(ctx context.Context, workspaceID, taskID string) error {
-	return s.withActive(ctx, workspaceID, func(c *Cycle) error {
+	return s.withActive(ctx, workspaceID, func(c *Cycle, tasks *taskList) error {
 		bet := c.Bet(taskID)
 		if bet == nil {
 			return ErrBetNotFound
@@ -144,11 +145,11 @@ func (s *Service) CutNow(ctx context.Context, workspaceID, taskID string) error 
 		if bet.Status != BetActive {
 			return ErrBetNotActive
 		}
-		tasks, err := s.listTasks(ctx, workspaceID, true)
+		all, err := tasks.all(ctx)
 		if err != nil {
 			return err
 		}
-		if reason := s.archive(ctx, workspaceID, c.ID, tasks[taskID]); reason != "" {
+		if reason := s.archive(ctx, workspaceID, c.ID, all[taskID]); reason != "" {
 			return fmt.Errorf("%w: %s", ErrArchiveFailed, reason)
 		}
 		return c.Cut(taskID, s.now())
@@ -204,10 +205,11 @@ func (s *Service) Candidates(ctx context.Context, workspaceID string) ([]Candida
 
 // withActive runs fn on the workspace's active cycle after the breaker had
 // its chance, and saves the cycle when fn succeeds.
-func (s *Service) withActive(ctx context.Context, workspaceID string, fn func(*Cycle) error) error {
+func (s *Service) withActive(ctx context.Context, workspaceID string, fn func(*Cycle, *taskList) error) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.breakWorkspace(ctx, workspaceID); err != nil {
+	tasks := s.newTaskList(workspaceID)
+	if err := s.breakWorkspace(ctx, workspaceID, tasks); err != nil {
 		return err
 	}
 	c, err := s.store.Active(ctx, workspaceID)
@@ -217,10 +219,10 @@ func (s *Service) withActive(ctx context.Context, workspaceID string, fn func(*C
 	if c == nil {
 		return ErrNoActiveCycle
 	}
-	if err := s.closeArchivedBets(ctx, workspaceID, c); err != nil {
+	if err := s.closeArchivedBets(ctx, workspaceID, c, tasks); err != nil {
 		return err
 	}
-	if err := fn(c); err != nil {
+	if err := fn(c, tasks); err != nil {
 		return err
 	}
 	return s.store.SaveActive(ctx, workspaceID, c)
@@ -229,11 +231,11 @@ func (s *Service) withActive(ctx context.Context, workspaceID string, fn func(*C
 // closeArchivedBets marks cut every active bet whose task is already archived
 // and saves the cycle. This happens when a "Cut now" reply timed out after the
 // Host had archived the task, or when someone archived it by hand.
-func (s *Service) closeArchivedBets(ctx context.Context, workspaceID string, c *Cycle) error {
+func (s *Service) closeArchivedBets(ctx context.Context, workspaceID string, c *Cycle, list *taskList) error {
 	if c == nil || len(c.ActiveBets()) == 0 {
 		return nil
 	}
-	tasks, err := s.listTasks(ctx, workspaceID, true)
+	tasks, err := list.all(ctx)
 	if err != nil {
 		return err
 	}
@@ -252,16 +254,41 @@ func (s *Service) closeArchivedBets(ctx context.Context, workspaceID string, c *
 	return s.store.SaveActive(ctx, workspaceID, c)
 }
 
-func (s *Service) liveTask(ctx context.Context, workspaceID, taskID string) (*pluginsdk.Task, error) {
+// taskList reads the workspace's tasks, archived ones included, at most once
+// per service call: the list grows with every archived task. Entries are not
+// refreshed after an archive, which callers only use to skip a task.
+type taskList struct {
+	s           *Service
+	workspaceID string
+	tasks       map[string]*pluginsdk.Task
+}
+
+func (s *Service) newTaskList(workspaceID string) *taskList {
+	return &taskList{s: s, workspaceID: workspaceID}
+}
+
+func (l *taskList) all(ctx context.Context) (map[string]*pluginsdk.Task, error) {
+	if l.tasks == nil {
+		tasks, err := l.s.listTasks(ctx, l.workspaceID, true)
+		if err != nil {
+			return nil, err
+		}
+		l.tasks = tasks
+	}
+	return l.tasks, nil
+}
+
+// live returns a task of the workspace that is not archived.
+func (l *taskList) live(ctx context.Context, taskID string) (*pluginsdk.Task, error) {
 	if taskID == "" {
 		return nil, ErrInvalidTask
 	}
-	tasks, err := s.listTasks(ctx, workspaceID, false)
+	tasks, err := l.all(ctx)
 	if err != nil {
 		return nil, err
 	}
 	t, ok := tasks[taskID]
-	if !ok {
+	if !ok || t.ArchivedAt != nil {
 		return nil, ErrTaskNotFound
 	}
 	return t, nil

@@ -69,13 +69,13 @@ func (s *Service) breakIndexedWorkspace(ctx context.Context, workspaceID string)
 	defer cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.breakWorkspace(ctx, workspaceID)
+	return s.breakWorkspace(ctx, workspaceID, s.newTaskList(workspaceID))
 }
 
 // breakWorkspace cuts every active bet of an overdue cycle and closes it.
 // A bet whose task cannot be archived stays active with its reason, so the
 // cycle stays open and the next run retries. Callers hold s.mu.
-func (s *Service) breakWorkspace(ctx context.Context, workspaceID string) error {
+func (s *Service) breakWorkspace(ctx context.Context, workspaceID string, list *taskList) error {
 	c, err := s.store.Active(ctx, workspaceID)
 	if err != nil || c == nil {
 		return err
@@ -85,7 +85,7 @@ func (s *Service) breakWorkspace(ctx context.Context, workspaceID string) error 
 		return nil
 	}
 	if active := c.ActiveBets(); len(active) > 0 {
-		tasks, err := s.listTasks(ctx, workspaceID, true)
+		tasks, err := list.all(ctx)
 		if err != nil {
 			return err
 		}

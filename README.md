@@ -65,7 +65,8 @@ workflows` and `api_write: tasks`.
 Every action that changes a cycle decides which tasks get archived, so starting
 a cycle, placing a bet, marking a bet shipped and **Cut now** are
 `access: admin` actions: only a kandev administrator can use them, and kandev
-answers 403 to other members. Any signed-in member can view the betting table.
+answers 403 to other members, which the page shows as "Only a kandev
+administrator can do this." Any signed-in member can view the betting table.
 
 ## Import the workflow
 

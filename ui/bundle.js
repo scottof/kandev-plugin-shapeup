@@ -15,7 +15,9 @@ export const ROUTE = "/shape-up";
 const REFRESH_MS = 60 * 1000;
 
 // errorMessage reads the safe message the backend puts in {"error": ...}.
+// kandev itself answers 403 only to a non-admin calling an admin action.
 export function errorMessage(err) {
+  if (err && err.status === 403) return "Only a kandev administrator can do this.";
   const body = err && err.body;
   if (body && typeof body === "object" && typeof body.error === "string" && body.error) {
     return body.error;
@@ -417,6 +419,12 @@ function makeBettingTablePage(host) {
     const currentWorkspace = React.useRef(workspaceId);
     currentWorkspace.current = workspaceId;
 
+    // A mutation still running for the previous workspace no longer
+    // blocks this one.
+    React.useEffect(() => {
+      setBusy(false);
+    }, [workspaceId]);
+
     React.useEffect(() => {
       if (!workspaceId) return undefined;
       // One flag per effect run covers the first load and every refresh.
@@ -454,7 +462,10 @@ function makeBettingTablePage(host) {
           if (!stale()) toast.error(errorMessage(err));
           return false;
         })
-        .finally(() => setBusy(false));
+        .finally(() => {
+          // The workspace switch already cleared busy for the new workspace.
+          if (!stale()) setBusy(false);
+        });
     };
 
     if (!workspaceId) {

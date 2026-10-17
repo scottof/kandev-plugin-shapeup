@@ -236,9 +236,46 @@ for (const outcome of ["resolves", "rejects"]) {
     await settle();
 
     assert.deepEqual(toasts, [], "no toast about the previous workspace");
-    assert.deepEqual(setCalls.slice(before), [false], "only busy is reset");
+    assert.deepEqual(setCalls.slice(before), [], "busy now belongs to the new workspace");
   });
 }
+
+// The page is not remounted on a workspace switch, so busy from a mutation in
+// the previous workspace is cleared when the new one loads.
+test("a workspace switch clears busy", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const setCalls = [];
+  const host = makeHost({ cleanups, setCalls, initialStates: { ...LOADED, 2: true } });
+  const { routes } = initialize(definition, host);
+
+  routes[0].component();
+  cleanups.forEach((fn) => fn());
+  assert.ok(setCalls.includes(false), "busy is reset");
+});
+
+test("a non-admin is told why a change was refused", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const toasts = [];
+  const host = makeHost({
+    cleanups,
+    toasts,
+    initialStates: LOADED,
+    reply: (key) =>
+      key === "bet.cut"
+        ? Promise.reject({ status: 403, body: { error: "admin role required" } })
+        : new Promise(() => {}),
+  });
+  const { routes } = initialize(definition, host);
+
+  const tree = routes[0].component();
+  cleanups.forEach((fn) => fn());
+  find(tree, byName("BetsTable")).props.onCut("t1");
+  await settle();
+
+  assert.deepEqual(toasts, [["error", "Only a kandev administrator can do this."]]);
+});
 
 test("Mark shipped is hidden once the cycle is overdue", async () => {
   const { definition } = await loadPlugin();
@@ -291,6 +328,7 @@ test("errorMessage shows only the backend's safe message", async () => {
   assert.equal(mod.errorMessage({ body: { error: "A cycle is already active in this workspace." } }), "A cycle is already active in this workspace.");
   assert.equal(mod.errorMessage(new Error("Request failed: 500 Internal Server Error")), "Something went wrong. Try again.");
   assert.equal(mod.errorMessage(undefined), "Something went wrong. Try again.");
+  assert.equal(mod.errorMessage({ status: 403, body: { error: "admin role required" } }), "Only a kandev administrator can do this.");
 });
 
 test("timeLeftLabel uses the host's locale-aware relative time", async () => {

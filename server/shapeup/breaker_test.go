@@ -270,12 +270,38 @@ func TestBreaker_EachArchiveHasItsOwnTimeout(t *testing.T) {
 	f.cycleWithBets(t, "t1")
 	f.pastDeadline()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	<-ctx.Done()
 	start := time.Now()
 	require.NoError(t, f.svc.RunBreaker(ctx))
 
 	require.True(t, f.host.Archived("t1"))
 	require.WithinRange(t, f.host.ArchiveDeadline, start.Add(ArchiveTimeout-time.Second), time.Now().Add(ArchiveTimeout))
+}
+
+// The ticker takes the lock per workspace, so a page action waits for one
+// workspace's cut at most, not for the whole run.
+func TestBreaker_ReleasesTheLockBetweenWorkspaces(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	_, err := f.svc.StartCycle(ctx, "ws2", "Other", 14)
+	require.NoError(t, err)
+	f.host.AddTask("ws2", "wf2", "s", "t9", "Other")
+	require.NoError(t, f.svc.PlaceBet(ctx, "ws2", "t9", AppetiteSmall))
+	f.pastDeadline()
+
+	var freeBetween []bool
+	f.svc.afterWorkspace = func() {
+		free := f.svc.mu.TryLock()
+		if free {
+			f.svc.mu.Unlock()
+		}
+		freeBetween = append(freeBetween, free)
+	}
+	require.NoError(t, f.svc.RunBreaker(ctx))
+
+	require.Equal(t, []bool{true, true}, freeBetween)
+	require.True(t, f.host.Archived("t1"))
+	require.True(t, f.host.Archived("t9"))
 }

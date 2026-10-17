@@ -47,6 +47,9 @@ func (s *Service) RunBreaker(ctx context.Context) error {
 		if err := s.breakIndexedWorkspace(ctx, id); err != nil {
 			errs = append(errs, fmt.Errorf("workspace %s: %w", id, err))
 		}
+		if s.afterWorkspace != nil {
+			s.afterWorkspace()
+		}
 	}
 	return errors.Join(errs...)
 }

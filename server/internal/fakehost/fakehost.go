@@ -42,6 +42,11 @@ type Host struct {
 	Replays int
 	// ArchiveDeadline is the context deadline of the last archive call.
 	ArchiveDeadline time.Time
+	// BeforeArchive, when set, runs at the start of every archive call
+	// without the Host lock, so a test can block an archive or act meanwhile.
+	BeforeArchive func(ctx context.Context, taskID string)
+	// TaskLists counts Tasks().List calls.
+	TaskLists int
 	// ArchiveStatus, when set, is the result of the next newly admitted
 	// archive instead of archiving.
 	ArchiveStatus pluginsdk.CommandStatus
@@ -77,7 +82,12 @@ func roundTrip(v map[string]any) map[string]any {
 	return out
 }
 
-func (h *Host) GetState(_ context.Context, scope, scopeID, key string) (map[string]any, bool, error) {
+// Like the gRPC client, every Host read and write fails once ctx is done.
+
+func (h *Host) GetState(ctx context.Context, scope, scopeID, key string) (map[string]any, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	v, ok := h.state[stateKey(scope, scopeID, key)]
@@ -87,7 +97,10 @@ func (h *Host) GetState(_ context.Context, scope, scopeID, key string) (map[stri
 	return roundTrip(v), true, nil
 }
 
-func (h *Host) SetState(_ context.Context, scope, scopeID, key string, value map[string]any) error {
+func (h *Host) SetState(ctx context.Context, scope, scopeID, key string, value map[string]any) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.StateErr != nil {
@@ -97,7 +110,10 @@ func (h *Host) SetState(_ context.Context, scope, scopeID, key string, value map
 	return nil
 }
 
-func (h *Host) DeleteState(_ context.Context, scope, scopeID, key string) error {
+func (h *Host) DeleteState(ctx context.Context, scope, scopeID, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.StateErr != nil {
@@ -107,7 +123,10 @@ func (h *Host) DeleteState(_ context.Context, scope, scopeID, key string) error 
 	return nil
 }
 
-func (h *Host) ListState(_ context.Context, scope, scopeID string) ([]pluginsdk.StateEntry, error) {
+func (h *Host) ListState(ctx context.Context, scope, scopeID string) ([]pluginsdk.StateEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	prefix := scope + "\x00" + scopeID + "\x00"
@@ -197,9 +216,13 @@ func (h *Host) Workflows() pluginsdk.WorkflowReader { return workflowReader{h} }
 
 type taskReader struct{ h *Host }
 
-func (r taskReader) List(_ context.Context, filter pluginsdk.TaskFilter, _ pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+func (r taskReader) List(ctx context.Context, filter pluginsdk.TaskFilter, _ pluginsdk.Page) ([]pluginsdk.Task, *pluginsdk.PageInfo, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	r.h.mu.Lock()
 	defer r.h.mu.Unlock()
+	r.h.TaskLists++
 	var out []pluginsdk.Task
 	for _, t := range r.h.tasks {
 		if len(filter.WorkspaceIDs) > 0 && !contains(filter.WorkspaceIDs, t.WorkspaceID) {
@@ -214,7 +237,10 @@ func (r taskReader) List(_ context.Context, filter pluginsdk.TaskFilter, _ plugi
 	return out, &pluginsdk.PageInfo{}, nil
 }
 
-func (r taskReader) Get(_ context.Context, id string) (*pluginsdk.Task, error) {
+func (r taskReader) Get(ctx context.Context, id string) (*pluginsdk.Task, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.h.mu.Lock()
 	defer r.h.mu.Unlock()
 	t, ok := r.h.tasks[id]
@@ -306,6 +332,12 @@ type commands struct {
 // is a conflict, and only UNAVAILABLE is left unrecorded so it can be retried.
 func (c commands) Archive(ctx context.Context, in pluginsdk.ExactTaskArchive) (*pluginsdk.CommandResult, *pluginsdk.Task, error) {
 	h := c.h
+	h.mu.Lock()
+	before := h.BeforeArchive
+	h.mu.Unlock()
+	if before != nil {
+		before(ctx, in.TaskID)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ArchiveCalls++

@@ -25,6 +25,10 @@ type Service struct {
 	now   func() time.Time
 	newID func() string
 	mu    sync.Mutex
+
+	// afterWorkspace, when set by a test, runs after each workspace of a
+	// breaker run.
+	afterWorkspace func()
 }
 
 func NewService(host pluginsdk.Host, now func() time.Time, newID func() string) *Service {

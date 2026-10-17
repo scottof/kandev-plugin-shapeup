@@ -62,6 +62,11 @@ cuts the bets.
 The manifest declares only what the plugin uses: `state`, `api_read: tasks,
 workflows` and `api_write: tasks`.
 
+Starting a cycle and **Cut now** archive tasks, so they are `access: admin`
+actions: only a kandev administrator can use them, and kandev answers 403 to
+other members. Any signed-in member can view the betting table, place a bet and
+mark a bet shipped.
+
 ## Import the workflow
 
 Open **Settings > Workspaces**, select the workspace, then **Workflows >
@@ -85,7 +90,9 @@ workflow that already has the name "Shape Up".
 6. At the deadline the circuit breaker cuts whatever is still active and closes
    the cycle. It moves to **Past cycles** with its shipped and cut bets.
 
-Deadlines are stored in UTC and shown in your browser's locale and time zone.
+Deadlines are stored in UTC. Dates and times use your browser's locale and
+time zone, not kandev's language setting: `host.utils` only offers relative
+times, which do follow kandev's language.
 
 ## How it works
 

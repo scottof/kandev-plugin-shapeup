@@ -48,7 +48,7 @@ actions:
     max_body_bytes: 1024
   - key: "cycle.start"
     scope: "workspace"
-    access: "authenticated"
+    access: "admin"
     max_body_bytes: 1024
   - key: "bet.place"
     scope: "workspace"
@@ -60,7 +60,7 @@ actions:
     max_body_bytes: 1024
   - key: "bet.cut"
     scope: "workspace"
-    access: "authenticated"
+    access: "admin"
     max_body_bytes: 1024
 
 ui:

@@ -418,11 +418,15 @@ function makeBettingTablePage(host) {
     // dropped instead of drawing that workspace's cycle here.
     const currentWorkspace = React.useRef(workspaceId);
     currentWorkspace.current = workspaceId;
+    // The latest mutation. Only its reply may clear busy, so an older reply
+    // cannot re-enable the buttons while a newer mutation is in flight.
+    const lastRun = React.useRef({ id: 0, workspace: "", pending: false });
 
-    // A mutation still running for the previous workspace no longer
-    // blocks this one.
+    // A mutation still running for another workspace does not block this
+    // one, but coming back to its workspace blocks it again.
     React.useEffect(() => {
-      setBusy(false);
+      const last = lastRun.current;
+      setBusy(last.pending && last.workspace === workspaceId);
     }, [workspaceId]);
 
     React.useEffect(() => {
@@ -449,6 +453,8 @@ function makeBettingTablePage(host) {
     const run = (key, body, success) => {
       const requested = workspaceId;
       const stale = () => currentWorkspace.current !== requested;
+      const id = lastRun.current.id + 1;
+      lastRun.current = { id, workspace: requested, pending: true };
       setBusy(true);
       return invoke(key, requested, body)
         .then((data) => {
@@ -463,6 +469,8 @@ function makeBettingTablePage(host) {
           return false;
         })
         .finally(() => {
+          if (lastRun.current.id !== id) return;
+          lastRun.current = { ...lastRun.current, pending: false };
           // The workspace switch already cleared busy for the new workspace.
           if (!stale()) setBusy(false);
         });

@@ -11,24 +11,40 @@ function element(type, props, ...children) {
 // A minimal stand-in for host.React: state never changes (setter calls are
 // recorded), effects run at once and their cleanups are collected so timers
 // do not outlive the test. initialStates, when given, replaces the initial
-// value of the n-th useState call; refs collects every useRef object.
-function fakeReact(cleanups, setCalls, initialStates = {}, refs = []) {
+// value of the n-th useState call; refs collects every useRef object and
+// effects records each useEffect's callback and dependency array.
+// beginRender starts a re-render: refs persist, and an effect runs again
+// (after its previous cleanup) only when its dependencies changed.
+function fakeReact(cleanups, setCalls, initialStates = {}, refs = [], effects = []) {
   let stateIndex = 0;
+  let refIndex = 0;
+  let effectIndex = 0;
   return {
+    beginRender: () => {
+      stateIndex = 0;
+      refIndex = 0;
+      effectIndex = 0;
+    },
     useState: (init) => {
       const i = stateIndex++;
       const value = i in initialStates ? initialStates[i] : typeof init === "function" ? init() : init;
       return [value, (v) => setCalls.push(v)];
     },
-    useEffect: (fn) => {
+    useEffect: (fn, deps) => {
+      const i = effectIndex++;
+      const prev = effects[i];
+      const same = prev && deps && prev.deps && deps.length === prev.deps.length && deps.every((d, k) => Object.is(d, prev.deps[k]));
+      if (same) return;
+      if (prev && prev.cleanup) prev.cleanup();
       const cleanup = fn();
+      effects[i] = { fn, deps, cleanup: typeof cleanup === "function" ? cleanup : null };
       if (typeof cleanup === "function") cleanups.push(cleanup);
     },
     useCallback: (fn) => fn,
     useRef: (value) => {
-      const ref = { current: value };
-      refs.push(ref);
-      return ref;
+      const i = refIndex++;
+      if (!(i in refs)) refs[i] = { current: value };
+      return refs[i];
     },
   };
 }
@@ -93,12 +109,13 @@ function makeHost({
   toasts = [],
   initialStates,
   refs,
+  effects,
   reply,
 } = {}) {
   const ui = new Proxy({}, { get: (_, name) => String(name) });
   return {
     jsx: element,
-    React: fakeReact(cleanups, setCalls, initialStates, refs),
+    React: fakeReact(cleanups, setCalls, initialStates, refs, effects),
     ui,
     utils: { formatRelativeTime: (iso) => `relative(${iso})`, cn: (...c) => c.join(" ") },
     toast: {
@@ -240,18 +257,77 @@ for (const outcome of ["resolves", "rejects"]) {
   });
 }
 
+// busyCalls keeps the setBusy calls: busy is the page's only boolean state.
+const busyCalls = (setCalls) => setCalls.filter((v) => typeof v === "boolean");
+
 // The page is not remounted on a workspace switch, so busy from a mutation in
 // the previous workspace is cleared when the new one loads.
 test("a workspace switch clears busy", async () => {
   const { definition } = await loadPlugin();
   const cleanups = [];
   const setCalls = [];
-  const host = makeHost({ cleanups, setCalls, initialStates: { ...LOADED, 2: true } });
+  const effects = [];
+  const host = makeHost({ cleanups, setCalls, effects, initialStates: { ...LOADED, 2: true } });
   const { routes } = initialize(definition, host);
 
-  routes[0].component();
-  cleanups.forEach((fn) => fn());
-  assert.ok(setCalls.includes(false), "busy is reset");
+  try {
+    routes[0].component();
+    const busyEffect = effects.find((e) => String(e.fn).includes("setBusy"));
+    assert.deepEqual(busyEffect.deps, ["ws1"], "keyed on the workspace id");
+
+    const before = setCalls.length;
+    host.React.beginRender();
+    routes[0].component();
+    assert.deepEqual(busyCalls(setCalls.slice(before)), [], "a re-render in the same workspace keeps busy");
+
+    host.context.getActiveWorkspaceId = () => "ws2";
+    host.React.beginRender();
+    routes[0].component();
+    assert.deepEqual(busyCalls(setCalls.slice(before)), [false], "busy is reset");
+  } finally {
+    cleanups.forEach((fn) => fn());
+  }
+});
+
+// A to B and back to A while A's mutation is pending: busy comes back, and an
+// older reply cannot clear busy for a newer mutation still in flight.
+test("returning to a workspace with a pending mutation keeps it busy", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const setCalls = [];
+  const pending = [];
+  const host = makeHost({
+    cleanups,
+    setCalls,
+    initialStates: LOADED,
+    reply: (key) => (key === "bet.cut" ? new Promise((r) => pending.push(() => r(ACTIVE_SNAPSHOT))) : new Promise(() => {})),
+  });
+  const { routes } = initialize(definition, host);
+  const render = (ws) => {
+    host.context.getActiveWorkspaceId = () => ws;
+    host.React.beginRender();
+    return routes[0].component();
+  };
+
+  try {
+    find(render("ws1"), byName("BetsTable")).props.onCut("t1");
+    render("ws2");
+    let mark = setCalls.length;
+    const backInA = render("ws1");
+    assert.deepEqual(busyCalls(setCalls.slice(mark)), [true], "busy again in A");
+
+    find(backInA, byName("BetsTable")).props.onCut("t1");
+    mark = setCalls.length;
+    pending[0]();
+    await settle();
+    assert.equal(busyCalls(setCalls.slice(mark)).includes(false), false, "the first reply leaves busy alone");
+
+    pending[1]();
+    await settle();
+    assert.deepEqual(busyCalls(setCalls.slice(mark)), [false], "the latest reply clears busy");
+  } finally {
+    cleanups.forEach((fn) => fn());
+  }
 });
 
 test("a non-admin is told why a change was refused", async () => {

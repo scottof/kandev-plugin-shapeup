@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Shape Up workflow template (`workflows/shape-up.yaml`): Raw ideas, Shape,
+  Betting table, Build and Ship.
+- Betting table page: start a cycle, bet on tasks with a small or big appetite,
+  mark bets shipped or cut them, and see past cycles.
+- Circuit breaker: at the cycle deadline every active bet is cut and its task
+  archived, then the cycle closes. Runs every minute, at plugin start and
+  before page actions. Needs the `host.v2.write:tasks` workspace grant.
+
+### Changed
+
+- The plugin is now `kandev-plugin-shapeup` 0.1.0, manifest API version 2,
+  requiring kandev 0.97.0 or later.
+- `make verify-package-host` accepts the manifest that plugin-pack rewrites
+  for a host-only package.
+
+### Removed
+
+- The template's demo page, composer action, `ping` webhook, demo settings and
+  the source-control recipe.
+
 ## [0.2.0] - 2026-10-05
 
 ### Changed

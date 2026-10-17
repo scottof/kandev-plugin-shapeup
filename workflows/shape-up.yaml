@@ -1,6 +1,6 @@
-# Shape Up workflow for kandev v0.97.0. Import it in kandev from the
-# workflow settings of a workspace (Import, then pick this file). It is the
-# portable export format (version 2), checked by server/workflow_test.go.
+# Shape Up workflow for kandev v0.97.0. Import it from Settings > Workspaces >
+# (workspace) > Workflows > Import. It is the portable export format
+# (version 2), checked by server/workflow_test.go.
 version: 2
 type: kandev_workflow
 workflows:

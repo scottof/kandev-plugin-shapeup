@@ -1,160 +1,69 @@
-// kandev plugin UI bundle — the frontend half of this plugin.
+// Shape Up plugin UI: the betting table page.
 //
-// This is a hand-written, NO-BUILD plain-JS ES module. It ships byte-for-byte
-// inside the package tar.gz under ui/bundle.js, and kandev serves it directly
-// from the extracted package at GET /api/plugins/<id>/ui/bundle.js, then
-// dynamically imports it as a native ES module. There is nothing to build:
-// edit this file and repackage (`make package` / `make package-host`).
+// A hand-written, no-build ES module. kandev serves it from the installed
+// package and calls window.registerKandevPlugin below. It uses only the
+// host's React (host.jsx), host.ui components and host.utils; never import or
+// bundle React, Radix or recharts here.
 //
-// The contract, in three touch points:
-//   - window.registerKandevPlugin(id, { initialize, destroy }) is the single
-//     global entry point the host calls once this module has been evaluated.
-//     `id` MUST match manifest.yaml's id.
-//   - The `host` object handed to initialize() carries the SHARED host React
-//     instance (`host.React`, `host.jsx` == host.React.createElement) plus a
-//     curated design system (`host.ui`), imperative toasts (`host.toast`),
-//     shared helpers (`host.utils`), the live theme (`host.theme` /
-//     `host.onThemeChange`), provider-neutral context (`host.context`), and
-//     navigation (`host.navigate`). NEVER import or bundle your own React —
-//     that breaks hook identity across the host tree. The same goes for
-//     recharts: use the `host.ui.Chart*` wrappers, because a second copy splits the
-//     context its tooltips and legends resolve through, exactly like React.
-//   - `registry` is where you declare nav items, routes, slot components,
-//     providers, task actions, review surfaces, and WS handlers. Every
-//     registration is tracked under this plugin's id, so
-//     the host bulk-unregisters everything when the plugin is disabled.
-//
-// `host.ui` is much broader than the few components used below — Accordion*,
-// Collapsible*, Select*, Tabs*, Sheet*, Pagination*, ScrollArea, Skeleton,
-// Switch, the Chart* recharts wrappers, and kandev's own PageTopbar,
-// Combobox and TaskCreateDialog are all there. Reach for one before
-// hand-rolling: a styled <div> progress bar or a getBoundingClientRect
-// popover will drift from the app around it. The authoritative list is
-// `apps/web/lib/plugins/host-api.ts` (`PLUGIN_UI`) in the kandev repo.
-//
-// Everything in this file is meant to be deleted piece by piece. The page
-// below is one Card built from independent parts — Popover, Progress, Table,
-// Empty — each of which can be removed without touching the others.
-//
-// Rename "kandev-plugin-template" below to your plugin id, then keep / delete
-// registrations to match what your plugin actually contributes.
+// Every read and write goes through the manifest-declared actions
+// (host.api.invokeAction). The host authenticates the caller and verifies the
+// workspace, and the backend re-runs the circuit breaker before answering, so
+// the page always shows the state after any overdue cut.
 
-// ---------------------------------------------------------------------------
-// A tiny module-level pub/sub holding the most recent task.created deliveries.
-// Kept outside any component so the list survives route navigation and is
-// shared by every subscriber. Delete this if you don't register a WS handler.
-// ---------------------------------------------------------------------------
+export const PLUGIN_ID = "kandev-plugin-shapeup";
+export const ROUTE = "/shape-up";
+const REFRESH_MS = 60 * 1000;
 
-// How many deliveries we keep. Also the denominator of the Progress bar below,
-// which is the honest thing for it to show: how full this buffer is.
-const RECENT_LIMIT = 5;
-
-let recentTasks = []; // newest first, capped at RECENT_LIMIT
-const recentListeners = new Set();
-
-function publishRecentTasks(next) {
-  recentTasks = next;
-  for (const listener of recentListeners) listener(recentTasks);
+// errorMessage reads the safe message the backend puts in {"error": ...}.
+// kandev itself answers 403 only to a non-admin calling an admin action.
+export function errorMessage(err) {
+  if (err && err.status === 403) return "Only a kandev administrator can do this.";
+  const body = err && err.body;
+  if (body && typeof body === "object" && typeof body.error === "string" && body.error) {
+    return body.error;
+  }
+  return "Something went wrong. Try again.";
 }
 
-// recordTask turns one task.created WS payload into a row. The payload is the
-// backend's task event shape (snake_case: task_id, title, workspace_id, ...);
-// it carries no "delivered at" field, so we stamp arrival ourselves — that is
-// the timestamp the table renders through host.utils.formatRelativeTime.
-function recordTask(payload) {
-  const task = payload || {};
-  const entry = {
-    taskId: task.task_id || "unknown",
-    title: task.title || "Untitled task",
-    seenAt: new Date().toISOString(),
-  };
-  publishRecentTasks([entry, ...recentTasks].slice(0, RECENT_LIMIT));
+// timeLeftLabel renders the time to the deadline in the viewer's locale.
+export function timeLeftLabel(utils, endIso, nowMs) {
+  if (Date.parse(endIso) <= nowMs) return "Deadline passed";
+  return `Ends ${utils.formatRelativeTime(endIso)}`;
 }
 
-// useRecentTasks re-renders its component whenever publishRecentTasks fires.
-// Built on host.React's useState/useEffect since this bundle can't ship its
-// own useSyncExternalStore without bundling React.
-function useRecentTasks(React) {
-  const [tasks, setTasks] = React.useState(recentTasks);
-  React.useEffect(() => {
-    // Resync first: a delivery may have landed between the initial render and
-    // this subscription.
-    setTasks(recentTasks);
-    recentListeners.add(setTasks);
-    return () => recentListeners.delete(setTasks);
-  }, []);
-  return tasks;
-}
-
-// ---------------------------------------------------------------------------
-// useHostTheme — the live light/dark theme, as component state.
-//
-// `host.theme` is a getter evaluated on every access, but `host` is built once
-// per plugin load: read it into a variable that outlives a render and you have
-// frozen it. Anything that only *styles* things can ignore this entirely —
-// every host.ui component and every Tailwind/CSS-variable class already
-// follows the theme on its own. You need this hook for the narrow case where
-// your plugin computes a color itself (canvas painting, an inline SVG fill,
-// a color passed to a chart) or, as below, displays the theme.
-//
-// Delete this together with whatever reads it.
-// ---------------------------------------------------------------------------
-function useHostTheme(host) {
-  const React = host.React;
-  const [theme, setTheme] = React.useState(host.theme);
-  React.useEffect(() => {
-    setTheme(host.theme); // resync, same reason as above
-    // onThemeChange returns its own unsubscribe — returning it straight from
-    // the effect is the whole teardown. Skipping it leaks a listener that
-    // outlives the component.
-    return host.onThemeChange(setTheme);
-  }, []);
-  return theme;
-}
-
-// ---------------------------------------------------------------------------
-// Inline SVG icons. The bundle ships no build step and can't import an icon
-// set (that would mean bundling), so glyphs are drawn by hand at 16px to match
-// first-party icons. Swap for your own.
-// ---------------------------------------------------------------------------
-function icon(h, path, size) {
-  return h(
-    "svg",
-    {
-      xmlns: "http://www.w3.org/2000/svg",
-      width: size || 16,
-      height: size || 16,
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor", // follows the theme with no JS — see useHostTheme
-      strokeWidth: 2,
-      strokeLinecap: "round",
-      strokeLinejoin: "round",
-      "aria-hidden": "true",
-    },
-    h("path", { d: path }),
+export function formatDate(iso) {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(
+    new Date(iso),
   );
 }
 
-const STAR_PATH = "M12 2l2.9 6.3 6.9.8-5.1 4.7 1.4 6.8L12 18l-6.1 3.4 1.4-6.8L2.2 9.9l6.9-.8L12 2z";
-const INFO_PATH = "M12 16v-4M12 8h.01M12 21a9 9 0 100-18 9 9 0 000 18z";
-const INBOX_PATH = "M22 12h-6l-2 3h-4l-2-3H2M5.5 5h13l3.5 7v6a2 2 0 01-2 2H4a2 2 0 01-2-2v-6l3.5-7z";
+const APPETITE_LABEL = { small: "Small batch", big: "Big batch" };
+const STATUS_VARIANT = { active: "default", shipped: "secondary", cut: "destructive" };
 
-// The host renders shortcuts with the platform's own modifier glyph; match it
-// rather than hard-coding "Ctrl", which is simply wrong on macOS.
-const MOD_KEY = /Mac|iPhone|iPad/i.test((navigator && navigator.platform) || "") ? "⌘" : "Ctrl";
+function useActiveWorkspaceId(host) {
+  const React = host.React;
+  const ctx = host.context;
+  const [workspaceId, setWorkspaceId] = React.useState(() =>
+    ctx && ctx.getActiveWorkspaceId ? ctx.getActiveWorkspaceId() || "" : "",
+  );
+  React.useEffect(() => {
+    if (!ctx || !ctx.subscribeActiveWorkspace) return undefined;
+    setWorkspaceId(ctx.getActiveWorkspaceId() || "");
+    return ctx.subscribeActiveWorkspace((id) => setWorkspaceId(id || ""));
+  }, []);
+  return workspaceId;
+}
 
-// ---------------------------------------------------------------------------
-// A native route/page, rendered inside the kandev SPA (not an iframe) from the
-// host's own design system. The host renders its first-party title bar above
-// this page; here we contribute only the body.
-// ---------------------------------------------------------------------------
-function makePluginPage(host) {
-  const { jsx: h, ui, toast, utils } = host;
+function makeBettingTablePage(host) {
+  const { jsx: h, ui, utils, toast } = host;
+  const React = host.React;
   const {
+    Alert,
+    AlertDescription,
+    AlertTitle,
+    Badge,
     Button,
     Card,
-    CardAction,
     CardContent,
     CardDescription,
     CardHeader,
@@ -162,17 +71,15 @@ function makePluginPage(host) {
     Empty,
     EmptyDescription,
     EmptyHeader,
-    EmptyMedia,
     EmptyTitle,
-    Kbd,
-    KbdGroup,
-    Popover,
-    PopoverContent,
-    PopoverDescription,
-    PopoverHeader,
-    PopoverTitle,
-    PopoverTrigger,
-    Progress,
+    Input,
+    Label,
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+    Skeleton,
     Table,
     TableBody,
     TableCell,
@@ -181,78 +88,103 @@ function makePluginPage(host) {
     TableRow,
   } = ui;
 
-  // AboutPopover — host.ui.Popover*, positioned by the host (Radix), so it
-  // flips and clamps at the viewport edge without any getBoundingClientRect
-  // math of your own. Delete this and the CardAction wrapping it together.
-  function AboutPopover() {
-    // The one thing on this page that genuinely needs a theme subscription:
-    // it prints the resolved value, so a stale read is visible as a wrong
-    // label when the user flips the theme with this popover open.
-    const theme = useHostTheme(host);
+  function invoke(key, workspaceId, body) {
+    return host.api.invokeAction(key, { workspaceId, body: body || {} });
+  }
 
+  function TaskLink({ bet }) {
     return h(
-      Popover,
+      Button,
+      {
+        type: "button",
+        variant: "link",
+        className: "h-auto p-0 font-medium",
+        onClick: () => host.navigate(`/t/${encodeURIComponent(bet.task_id)}`),
+      },
+      bet.task_title || bet.task_id,
+    );
+  }
+
+  function StartCycleForm({ busy, onStart }) {
+    const [name, setName] = React.useState("");
+    const [days, setDays] = React.useState("14");
+    const submit = (event) => {
+      event.preventDefault();
+      onStart({ name: name.trim(), days: Number.parseFloat(days) || 0 });
+    };
+    return h(
+      Card,
       null,
       h(
-        PopoverTrigger,
-        { asChild: true },
+        CardHeader,
+        null,
+        h(CardTitle, null, "No active cycle"),
         h(
-          Button,
-          {
-            id: "template-about-trigger",
-            type: "button",
-            variant: "ghost",
-            size: "icon",
-            className: "h-7 w-7",
-            "aria-label": "About this page",
-          },
-          icon(h, INFO_PATH),
+          CardDescription,
+          null,
+          "Start a cycle to place bets. At the deadline, every unfinished bet is cut and its task is archived.",
         ),
       ),
       h(
-        PopoverContent,
-        { align: "end", className: "w-80" },
+        CardContent,
+        null,
         h(
-          PopoverHeader,
-          null,
-          h(PopoverTitle, null, "Where these rows come from"),
+          "form",
+          { className: "flex flex-wrap items-end gap-3", onSubmit: submit },
           h(
-            PopoverDescription,
-            null,
-            "The registerWsHandler(\"task.created\", ...) call at the bottom of ",
-            "ui/bundle.js. It fires for every task created anywhere in kandev ",
-            "while this tab is open — no polling, no refetch.",
+            "div",
+            { className: "grid gap-1.5" },
+            h(Label, { htmlFor: "shapeup-cycle-name" }, "Cycle name"),
+            h(Input, {
+              id: "shapeup-cycle-name",
+              value: name,
+              maxLength: 80,
+              placeholder: "October cycle",
+              onChange: (e) => setName(e.target.value),
+            }),
           ),
-        ),
-        h(
-          "p",
-          { className: "text-muted-foreground mt-3 text-xs" },
-          "Create one with ",
-          // host.ui.Kbd renders a key the same way the app's own shortcut
-          // surfaces do. This is kandev's real "new task" binding.
-          h(KbdGroup, null, h(Kbd, null, MOD_KEY), h(Kbd, null, "N")),
-          " to watch a row appear.",
-        ),
-        h(
-          "p",
-          { id: "template-theme-readout", className: "text-muted-foreground mt-3 text-xs" },
-          `Host theme: ${theme}. `,
-          "Everything above follows it with no JS — host.ui components and CSS ",
-          "variables restyle themselves. Subscribe via host.onThemeChange only ",
-          "for colors you compute yourself.",
+          h(
+            "div",
+            { className: "grid gap-1.5" },
+            h(Label, { htmlFor: "shapeup-cycle-days" }, "Length in days"),
+            h(Input, {
+              id: "shapeup-cycle-days",
+              type: "number",
+              min: 0.001,
+              max: 90,
+              step: "any",
+              className: "w-28",
+              value: days,
+              onChange: (e) => setDays(e.target.value),
+            }),
+          ),
+          h(
+            Button,
+            { id: "shapeup-start-cycle", type: "submit", disabled: busy || !name.trim() },
+            "Start cycle",
+          ),
         ),
       ),
     );
   }
 
-  // RecentTasksTable / EmptyState — the two halves of the same slot. Keep
-  // whichever matches your data and delete the other; an empty state built
-  // from host.ui.Empty* costs nothing and stops your page from looking broken
-  // before its first delivery.
-  function RecentTasksTable({ tasks }) {
+  function BetsTable({ cycle, busy, overdue, onShip, onCut, nowMs }) {
+    const [confirming, setConfirming] = React.useState("");
+    if (!cycle.bets || cycle.bets.length === 0) {
+      return h(
+        Empty,
+        { id: "shapeup-no-bets" },
+        h(
+          EmptyHeader,
+          null,
+          h(EmptyTitle, null, "No bets yet"),
+          h(EmptyDescription, null, "Pick a shaped pitch below and bet on it for this cycle."),
+        ),
+      );
+    }
     return h(
       Table,
-      null,
+      { id: "shapeup-bets" },
       h(
         TableHeader,
         null,
@@ -260,25 +192,77 @@ function makePluginPage(host) {
           TableRow,
           null,
           h(TableHead, null, "Task"),
-          h(TableHead, { className: "w-32 text-right" }, "Seen"),
+          h(TableHead, null, "Appetite"),
+          h(TableHead, null, "Status"),
+          h(TableHead, null, "Time left"),
+          h(TableHead, { className: "text-right" }, "Actions"),
         ),
       ),
       h(
         TableBody,
         null,
-        tasks.map((task) =>
+        cycle.bets.map((bet) =>
           h(
             TableRow,
-            { key: `${task.taskId}-${task.seenAt}` },
-            h(TableCell, { className: "font-medium" }, task.title),
+            { key: bet.task_id },
+            h(TableCell, null, h(TaskLink, { bet })),
+            h(TableCell, null, APPETITE_LABEL[bet.appetite] || bet.appetite),
+            h(TableCell, null, h(Badge, { variant: STATUS_VARIANT[bet.status] || "outline" }, bet.status)),
             h(
               TableCell,
-              { className: "text-muted-foreground text-right text-xs" },
-              // host.utils.formatRelativeTime is locale-aware
-              // (Intl.RelativeTimeFormat) in the user's active locale. A
-              // hand-rolled "3 minutes ago" ladder is English-only by
-              // construction and silently untranslated for everyone else.
-              utils.formatRelativeTime(task.seenAt),
+              { className: "text-muted-foreground text-xs" },
+              bet.status === "active" ? timeLeftLabel(utils, cycle.end, nowMs) : formatDate(bet.closed_at),
+            ),
+            h(
+              TableCell,
+              { className: "text-right" },
+              bet.status !== "active"
+                ? null
+                : h(
+                    "div",
+                    { className: "flex justify-end gap-2" },
+                    // Past the deadline only a cut is possible.
+                    overdue
+                      ? null
+                      : h(
+                          Button,
+                          {
+                            type: "button",
+                            size: "sm",
+                            variant: "outline",
+                            disabled: busy,
+                            onClick: () => onShip(bet.task_id),
+                          },
+                          "Mark shipped",
+                        ),
+                    confirming === bet.task_id
+                      ? h(
+                          Button,
+                          {
+                            type: "button",
+                            size: "sm",
+                            variant: "destructive",
+                            disabled: busy,
+                            onClick: () => {
+                              setConfirming("");
+                              onCut(bet.task_id);
+                            },
+                          },
+                          "Confirm cut",
+                        )
+                      : h(
+                          Button,
+                          {
+                            type: "button",
+                            size: "sm",
+                            variant: "ghost",
+                            disabled: busy,
+                            title: "Archives the task and stops its agent",
+                            onClick: () => setConfirming(bet.task_id),
+                          },
+                          "Cut now",
+                        ),
+                  ),
             ),
           ),
         ),
@@ -286,203 +270,315 @@ function makePluginPage(host) {
     );
   }
 
-  function EmptyState() {
-    return h(
-      Empty,
-      { id: "template-page-empty" },
-      h(
-        EmptyHeader,
-        null,
-        h(EmptyMedia, { variant: "icon" }, icon(h, INBOX_PATH)),
-        h(EmptyTitle, null, "No tasks created yet"),
+  function PlaceBetForm({ workspaceId, busy, onPlace, refreshKey }) {
+    const [state, setState] = React.useState({ loading: true, error: "", tasks: [] });
+    const [taskId, setTaskId] = React.useState("");
+    const [appetite, setAppetite] = React.useState("small");
+    React.useEffect(() => {
+      let live = true;
+      setState((s) => ({ ...s, loading: true, error: "" }));
+      invoke("tasks.candidates", workspaceId).then(
+        (res) => live && setState({ loading: false, error: "", tasks: (res && res.tasks) || [] }),
+        (err) => live && setState({ loading: false, error: errorMessage(err), tasks: [] }),
+      );
+      return () => {
+        live = false;
+      };
+    }, [workspaceId, refreshKey]);
+
+    let picker;
+    if (state.loading) {
+      picker = h(Skeleton, { className: "h-9 w-72" });
+    } else if (state.error) {
+      picker = h("p", { className: "text-destructive text-xs" }, state.error);
+    } else if (state.tasks.length === 0) {
+      picker = h("p", { className: "text-muted-foreground text-xs" }, "No open tasks to bet on in this workspace.");
+    } else {
+      picker = h(
+        Select,
+        { value: taskId, onValueChange: setTaskId },
+        h(SelectTrigger, { id: "shapeup-bet-task", className: "w-72" }, h(SelectValue, { placeholder: "Pick a task" })),
         h(
-          EmptyDescription,
+          SelectContent,
           null,
-          "This page fills in as tasks are created while it is open.",
+          state.tasks.map((t) =>
+            h(
+              SelectItem,
+              { key: t.task_id, value: t.task_id },
+              t.at_betting_table ? `${t.title} (betting table)` : t.title,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return h(
+      Card,
+      null,
+      h(
+        CardHeader,
+        null,
+        h(CardTitle, null, "Place a bet"),
+        h(CardDescription, null, "Tasks waiting at the betting table come first."),
+      ),
+      h(
+        CardContent,
+        null,
+        h(
+          "div",
+          { className: "flex flex-wrap items-end gap-3" },
+          h("div", { className: "grid gap-1.5" }, h(Label, { htmlFor: "shapeup-bet-task" }, "Task"), picker),
+          h(
+            "div",
+            { className: "grid gap-1.5" },
+            h(Label, { htmlFor: "shapeup-bet-appetite" }, "Appetite"),
+            h(
+              Select,
+              { value: appetite, onValueChange: setAppetite },
+              h(SelectTrigger, { id: "shapeup-bet-appetite", className: "w-56" }, h(SelectValue, null)),
+              h(
+                SelectContent,
+                null,
+                h(SelectItem, { value: "small" }, "Small batch (part of the cycle)"),
+                h(SelectItem, { value: "big" }, "Big batch (the whole cycle)"),
+              ),
+            ),
+          ),
+          h(
+            Button,
+            {
+              id: "shapeup-place-bet",
+              type: "button",
+              disabled: busy || !taskId,
+              onClick: () =>
+                onPlace({ task_id: taskId, appetite }).then((placed) => {
+                  if (placed) setTaskId("");
+                }),
+            },
+            "Place bet",
+          ),
         ),
       ),
     );
   }
 
-  return function PluginPage() {
-    const tasks = useRecentTasks(host.React);
-    const isEmpty = tasks.length === 0;
+  function History({ cycles }) {
+    if (!cycles || cycles.length === 0) return null;
+    return h(
+      Card,
+      null,
+      h(CardHeader, null, h(CardTitle, null, "Past cycles")),
+      h(
+        CardContent,
+        { className: "grid gap-4" },
+        cycles.map((cycle) => {
+          const bets = cycle.bets || [];
+          const shipped = bets.filter((b) => b.status === "shipped").length;
+          const cut = bets.filter((b) => b.status === "cut").length;
+          return h(
+            "div",
+            { key: cycle.id, className: "grid gap-1" },
+            h(
+              "div",
+              { className: "flex flex-wrap items-baseline gap-2" },
+              h("span", { className: "font-medium" }, cycle.name),
+              h(
+                "span",
+                { className: "text-muted-foreground text-xs" },
+                `${formatDate(cycle.start)} to ${formatDate(cycle.end)}. ${shipped} shipped, ${cut} cut.`,
+              ),
+            ),
+            bets.length === 0
+              ? h("p", { className: "text-muted-foreground text-xs" }, "No bets in this cycle.")
+              : h(
+                  "ul",
+                  { className: "grid gap-0.5 text-sm" },
+                  bets.map((bet) =>
+                    h(
+                      "li",
+                      { key: bet.task_id, className: "flex items-center gap-2" },
+                      h(Badge, { variant: STATUS_VARIANT[bet.status] || "outline" }, bet.status),
+                      h("span", null, bet.task_title || bet.task_id),
+                    ),
+                  ),
+                ),
+          );
+        }),
+      ),
+    );
+  }
 
-    // One action, wired to both toast variants. host.toast is imperative — the
-    // host mounts the single <Toaster/>, so there is nothing to render and it
-    // works from anywhere, including inside host.openModal content.
-    //
-    // The button stays enabled when the buffer is empty on purpose: that is
-    // what makes the .error path reachable. toast.error renders like any other
-    // variant and logs `[plugins] toast.error from "<id>"` to the console, but
-    // deliberately files NO backend error report — kandev's error log is for
-    // kandev's own faults, not a plugin reporting an expected condition.
-    const onClear = () => {
-      if (isEmpty) {
-        toast.error("Nothing to clear yet");
-        return;
-      }
-      const cleared = tasks.length;
-      publishRecentTasks([]);
-      toast.success(`Cleared ${cleared} row${cleared === 1 ? "" : "s"}`);
+  return function BettingTablePage() {
+    const workspaceId = useActiveWorkspaceId(host);
+    const [state, setState] = React.useState({ loading: true, error: "", data: null });
+    const [busy, setBusy] = React.useState(false);
+    const [refreshKey, setRefreshKey] = React.useState(0);
+    const [reloadKey, setReloadKey] = React.useState(0);
+    // The workspace the page shows now. A reply for another workspace is
+    // dropped instead of drawing that workspace's cycle here.
+    const currentWorkspace = React.useRef(workspaceId);
+    currentWorkspace.current = workspaceId;
+    // The latest mutation. Only its reply may clear busy, so an older reply
+    // cannot re-enable the buttons while a newer mutation is in flight.
+    const lastRun = React.useRef({ id: 0, workspace: "", pending: false });
+
+    // A mutation still running for another workspace does not block this
+    // one, but coming back to its workspace blocks it again.
+    React.useEffect(() => {
+      const last = lastRun.current;
+      setBusy(last.pending && last.workspace === workspaceId);
+    }, [workspaceId]);
+
+    React.useEffect(() => {
+      if (!workspaceId) return undefined;
+      // One flag per effect run covers the first load and every refresh.
+      let live = true;
+      const fetchState = () =>
+        invoke("state.get", workspaceId).then(
+          (data) => live && setState({ loading: false, error: "", data }),
+          (err) => live && setState((s) => ({ loading: false, error: errorMessage(err), data: s.data })),
+        );
+      setState({ loading: true, error: "", data: null });
+      fetchState();
+      // Picks up a circuit-breaker cut while the page stays open.
+      const timer = setInterval(fetchState, REFRESH_MS);
+      return () => {
+        live = false;
+        clearInterval(timer);
+      };
+    }, [workspaceId, reloadKey]);
+
+    // run resolves to true when the action succeeded for the workspace the
+    // page still shows.
+    const run = (key, body, success) => {
+      const requested = workspaceId;
+      const stale = () => currentWorkspace.current !== requested;
+      const id = lastRun.current.id + 1;
+      lastRun.current = { id, workspace: requested, pending: true };
+      setBusy(true);
+      return invoke(key, requested, body)
+        .then((data) => {
+          if (stale()) return false;
+          setState({ loading: false, error: "", data });
+          setRefreshKey((k) => k + 1);
+          if (success) toast.success(success);
+          return true;
+        })
+        .catch((err) => {
+          if (!stale()) toast.error(errorMessage(err));
+          return false;
+        })
+        .finally(() => {
+          if (lastRun.current.id !== id) return;
+          lastRun.current = { ...lastRun.current, pending: false };
+          // The workspace switch already cleared busy for the new workspace.
+          if (!stale()) setBusy(false);
+        });
     };
+
+    if (!workspaceId) {
+      return h(
+        "div",
+        { className: "p-4" },
+        h(Empty, null, h(EmptyHeader, null, h(EmptyTitle, null, "Pick a workspace"), h(EmptyDescription, null, "Cycles and bets belong to a workspace."))),
+      );
+    }
+    if (state.loading) {
+      return h(
+        "div",
+        { id: "shapeup-loading", className: "grid max-w-4xl gap-4 p-4" },
+        h(Skeleton, { className: "h-32 w-full" }),
+        h(Skeleton, { className: "h-48 w-full" }),
+      );
+    }
+    if (!state.data) {
+      return h(
+        "div",
+        { className: "max-w-4xl p-4" },
+        h(
+          Alert,
+          { id: "shapeup-error", variant: "destructive" },
+          h(AlertTitle, null, "Could not load the betting table"),
+          h(AlertDescription, null, state.error),
+        ),
+        h(
+          Button,
+          { type: "button", variant: "outline", className: "mt-3", onClick: () => setReloadKey((k) => k + 1) },
+          "Try again",
+        ),
+      );
+    }
+
+    const { active, history, now } = state.data;
+    const nowMs = Date.parse(now) || Date.now();
+    const failing = active ? (active.bets || []).filter((b) => b.status === "active" && b.error) : [];
 
     return h(
       "div",
-      { className: "p-4 max-w-2xl" },
-      h(
-        Card,
-        null,
-        h(
-          CardHeader,
-          null,
-          h(CardTitle, { id: "template-page-title" }, "Template plugin"),
-          h(CardDescription, null, `The ${RECENT_LIMIT} most recent tasks created since this page loaded`),
-          h(CardAction, null, h(AboutPopover)),
-        ),
-        h(
-          CardContent,
-          null,
-          // host.ui.Progress takes a 0-100 value. Used here for what it is
-          // actually good at: a bounded ratio. Don't reach for it to fake an
-          // indeterminate spinner — host.ui.Spinner is that.
-          h(
-            "div",
-            { className: "mb-4" },
-            h(Progress, { id: "template-page-progress", value: (tasks.length / RECENT_LIMIT) * 100 }),
+      { className: "grid max-w-4xl gap-4 p-4" },
+      state.error
+        ? h(Alert, { variant: "destructive" }, h(AlertDescription, null, state.error))
+        : null,
+      failing.length > 0
+        ? h(
+            Alert,
+            { id: "shapeup-breaker-blocked", variant: "destructive" },
+            h(AlertTitle, null, "The circuit breaker could not cut every bet"),
+            h(AlertDescription, null, failing[0].error),
+          )
+        : null,
+      active
+        ? h(
+            Card,
+            null,
             h(
-              "p",
-              {
-                // host.utils.cn is the host's own clsx + tailwind-merge
-                // combiner, so conditional classes merge the same way they do
-                // in the components they sit next to.
-                className: utils.cn(
-                  "mt-2 text-xs",
-                  isEmpty ? "text-muted-foreground/60" : "text-muted-foreground",
-                ),
-              },
-              `buffer ${tasks.length} of ${RECENT_LIMIT}`,
+              CardHeader,
+              null,
+              h(CardTitle, { id: "shapeup-cycle-name" }, active.name),
+              h(
+                CardDescription,
+                null,
+                `Deadline ${formatDate(active.end)}. ${timeLeftLabel(utils, active.end, nowMs)}.`,
+              ),
             ),
-          ),
-          isEmpty ? h(EmptyState) : h(RecentTasksTable, { tasks }),
-          h(
-            "div",
-            { className: "mt-4 flex justify-end" },
             h(
-              Button,
-              {
-                id: "template-page-clear",
-                type: "button",
-                variant: "outline",
-                size: "sm",
-                onClick: onClear,
-              },
-              "Clear",
+              CardContent,
+              null,
+              h(BetsTable, {
+                cycle: active,
+                busy,
+                overdue: state.data.overdue,
+                nowMs,
+                onShip: (taskId) => run("bet.ship", { task_id: taskId }, "Marked as shipped"),
+                onCut: (taskId) => run("bet.cut", { task_id: taskId }, "Bet cut and task archived"),
+              }),
             ),
-          ),
-        ),
-      ),
+          )
+        : h(StartCycleForm, { busy, onStart: (body) => run("cycle.start", body, "Cycle started") }),
+      active && !state.data.overdue
+        ? h(PlaceBetForm, {
+            workspaceId,
+            busy,
+            refreshKey,
+            onPlace: (body) => run("bet.place", body, "Bet placed"),
+          })
+        : null,
+      h(History, { cycles: history }),
     );
   };
 }
 
-// ---------------------------------------------------------------------------
-// A component for the "chat-input-actions" slot: an icon button rendered in
-// the chat composer toolbar, beside the model picker, mic, and send. The host
-// passes { sessionId, taskId, taskTitle } as slotProps, so the button knows
-// which task/session the user is looking at.
-// ---------------------------------------------------------------------------
-function makeChatToolbarAction(host) {
-  const { jsx: h, ui } = host;
-  const { Button, Tooltip, TooltipTrigger, TooltipContent } = ui;
-
-  return function ChatToolbarAction({ slotProps }) {
-    const ctx = slotProps || {};
-    const label = ctx.taskTitle || ctx.taskId;
-    const translate = host.i18n && host.i18n.useTranslation
-      ? host.i18n.useTranslation().t
-      : null;
-    const actionLabel = translate
-      ? translate("openTemplatePage", { defaultValue: "Template — open page" })
-      : "Template — open page";
-    const tooltip = label ? `${actionLabel} (task: ${label})` : actionLabel;
-
-    // Action owns the shell and tooltip on supported hosts. Keep one legacy
-    // path for hosts that predate Action; both paths keep the same registration.
-    if (typeof ui.Action === "function") {
-      return h(ui.Action, {
-        id: "template-chat-action",
-        label: actionLabel,
-        icon: icon(h, STAR_PATH),
-        tooltip,
-        onClick: () => host.navigate("/template"),
-      });
-    }
-
-    // A plain Tooltip needs no provider of your own: the app shell mounts one,
-    // and host.openModal content gets its own, so this works inside a plugin
-    // modal too. host.ui.TooltipProvider is exported only for when you want a
-    // custom delayDuration over a dense cluster of tooltips.
-    return h(
-      Tooltip,
-      null,
-      h(
-        TooltipTrigger,
-        { asChild: true },
-        h(
-          Button,
-          {
-            id: "template-chat-action",
-            type: "button",
-            variant: "ghost",
-            size: "icon",
-            className: "h-7 w-7 cursor-pointer hover:bg-muted/40",
-            "aria-label": tooltip,
-            onClick: () => host.navigate("/template"),
-          },
-          icon(h, STAR_PATH),
-        ),
-      ),
-      h(TooltipContent, null, tooltip),
-    );
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Registration. Keep only what your plugin uses.
-// ---------------------------------------------------------------------------
-window.registerKandevPlugin("kandev-plugin-template", {
+window.registerKandevPlugin(PLUGIN_ID, {
   initialize(registry, host) {
-    // A sidebar entry. `icon` is a curated host icon name; it also becomes the
-    // default topbar icon for the route registered on the same path.
     registry.registerNavItem({
-      id: "template",
-      label: "Template",
-      path: "/template",
-      icon: "puzzle",
+      id: "shape-up",
+      label: "Shape Up",
+      path: ROUTE,
+      icon: "calendar",
       section: "main",
     });
-
-    // A native route. The topbar title/icon default to the nav item above;
-    // here we add a subtitle. Pass { topbar: false } to own the whole page
-    // chrome yourself (host.ui.PageTopbar is available for that).
-    registry.registerRoute("/template", makePluginPage(host), {
-      topbar: { subtitle: "A starter kandev plugin page" },
+    registry.registerRoute(ROUTE, makeBettingTablePage(host), {
+      topbar: { subtitle: "Betting table" },
     });
-
-    // A WS handler: fires for every task.created message the SPA receives,
-    // regardless of which component is mounted, since the buffer lives at
-    // module scope. Register handlers only for events you actually use.
-    registry.registerWsHandler("task.created", recordTask);
-
-    // A chat-composer toolbar button.
-    registry.registerComponent("chat-input-actions", makeChatToolbarAction(host));
-  },
-
-  destroy() {
-    // The host bulk-unregisters everything under this plugin's id; reset local
-    // module state too so a re-enable starts clean.
-    publishRecentTasks([]);
-    recentListeners.clear();
   },
 });

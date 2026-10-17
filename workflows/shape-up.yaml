@@ -1,0 +1,131 @@
+# Shape Up workflow for kandev v0.97.0. Import it in kandev from the
+# workflow settings of a workspace (Import, then pick this file). It is the
+# portable export format (version 2), checked by server/workflow_test.go.
+version: 2
+type: kandev_workflow
+workflows:
+  - name: Shape Up
+    description: >-
+      Raw ideas are shaped into pitches, bet on at the betting table, built
+      within a fixed cycle and shipped. Unfinished bets are cut by the Shape Up
+      plugin's circuit breaker at the end of the cycle, never extended.
+    steps:
+      - name: Raw ideas
+        position: 0
+        color: bg-neutral-400
+        is_start_step: true
+        show_in_command_panel: false
+        allow_manual_move: true
+        complete_task_on_enter: false
+        disable_unclassified_fallback: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+        events: {}
+
+      - name: Shape
+        position: 1
+        color: bg-purple-500
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        complete_task_on_enter: false
+        disable_unclassified_fallback: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+        prompt: |
+          [SHAPING PHASE]
+          Shape this raw idea into a pitch. Do NOT write or change any code.
+
+          {{task_prompt}}
+
+          STEP 1: UNDERSTAND THE IDEA
+          If the problem or the appetite is unclear, ask the user with the
+          ask_user_question_kandev tool before going further.
+
+          STEP 2: EXPLORE
+          Read the code and docs that the idea touches, enough to find the
+          rabbit holes. Do not design every detail.
+
+          STEP 3: WRITE THE PITCH
+          Write the pitch with these sections:
+          1. Problem: the situation and why it matters now.
+          2. Appetite: small batch (part of a cycle) or big batch (a whole
+             cycle). The appetite is a time box, not an estimate.
+          3. Solution: the elements at the right level of abstraction, with
+             rough sketches or lists rather than wireframes.
+          4. Rabbit holes: the risks you found and how the solution avoids them.
+          5. No-gos: what is explicitly out of scope.
+
+          IMPORTANT: Save the pitch with the create_task_plan_kandev MCP tool,
+          using the task_id from the session context. Then STOP and wait for
+          human review. A human decides at the betting table whether to bet on it.
+        events:
+          on_enter:
+            - type: enable_plan_mode
+            - type: auto_start_agent
+          on_exit:
+            - type: disable_plan_mode
+
+      - name: Betting table
+        position: 2
+        color: bg-amber-500
+        is_start_step: false
+        show_in_command_panel: false
+        allow_manual_move: true
+        complete_task_on_enter: false
+        disable_unclassified_fallback: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+        events: {}
+
+      - name: Build
+        position: 3
+        color: bg-blue-500
+        is_start_step: false
+        show_in_command_panel: true
+        allow_manual_move: true
+        complete_task_on_enter: false
+        disable_unclassified_fallback: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+        prompt: |
+          [BUILD PHASE]
+          Build the pitch this task was bet on, within the cycle.
+
+          {{task_prompt}}
+
+          STEP 1: READ THE PITCH FIRST
+          Retrieve the pitch with get_task_plan_kandev using the task_id from
+          the session context, including any edits made at the betting table.
+
+          STEP 2: TREAT THE PITCH AS THE CONTRACT
+          - The no-gos and the rabbit holes are hard constraints. Do not build
+            anything listed as a no-go and do not go down a listed rabbit hole.
+          - The appetite is fixed. When the work does not fit, cut scope inside
+            the pitch instead of growing it.
+          - Discovered work becomes a sub-task (a scope) only when it is inside
+            the pitch. Work outside the pitch is written down in your summary,
+            not built.
+
+          STEP 3: BUILD
+          Work in small steps with tests, following the conventions of the
+          repository, and commit your own changes as you go.
+
+          STEP 4: STOP
+          If you are blocked or the pitch turns out to be wrong, stop and ask
+          the user. Do not extend the scope to get unstuck.
+        events:
+          on_enter:
+            - type: auto_start_agent
+
+      - name: Ship
+        position: 4
+        color: bg-green-500
+        is_start_step: false
+        show_in_command_panel: false
+        allow_manual_move: true
+        complete_task_on_enter: false
+        disable_unclassified_fallback: false
+        auto_advance_requires_signal: false
+        cancel_triggers_turn_complete: false
+        events: {}

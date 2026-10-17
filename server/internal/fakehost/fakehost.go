@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,28 +30,34 @@ type Host struct {
 	tasks map[string]*pluginsdk.Task
 	steps map[string][]pluginsdk.WorkflowStep
 
-	// Granted mirrors the workspace grant for host.v2.write:tasks.
-	Granted bool
+	// Granted mirrors the workspace grant for host.v2.write:tasks, and
+	// ApprovalRevision its revision (it changes each time the grant is saved).
+	Granted          bool
+	ApprovalRevision uint64
 	// NoExact hides the Host v2 extension, like an older Kandev host.
 	NoExact bool
 	// ArchiveCalls counts archive commands that reached the Host.
 	ArchiveCalls int
-	// ArchiveStatus, when set, overrides the status of the next archive.
+	// Replays counts archive calls answered from a recorded receipt.
+	Replays int
+	// ArchiveStatus, when set, is the result of the next newly admitted
+	// archive instead of archiving.
 	ArchiveStatus pluginsdk.CommandStatus
 	// StateErr, when set, fails every state write.
 	StateErr error
 
-	seenKeys map[string]bool
+	receipts map[string]receipt
 	clock    int
 }
 
 func New() *Host {
 	return &Host{
-		state:    map[string]map[string]any{},
-		tasks:    map[string]*pluginsdk.Task{},
-		steps:    map[string][]pluginsdk.WorkflowStep{},
-		seenKeys: map[string]bool{},
-		Granted:  true,
+		state:            map[string]map[string]any{},
+		tasks:            map[string]*pluginsdk.Task{},
+		steps:            map[string][]pluginsdk.WorkflowStep{},
+		receipts:         map[string]receipt{},
+		Granted:          true,
+		ApprovalRevision: 7,
 	}
 }
 
@@ -156,6 +163,13 @@ func (h *Host) ArchiveDirectly(id string) {
 	h.tasks[id].ResourceVersion = h.nextVersion()
 }
 
+// TouchTask changes a task's resource version, as any edit does.
+func (h *Host) TouchTask(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.tasks[id].ResourceVersion = h.nextVersion()
+}
+
 // DeleteTask removes a task entirely.
 func (h *Host) DeleteTask(id string) {
 	h.mu.Lock()
@@ -257,7 +271,7 @@ func (e Exact) GetCapabilityContext(_ context.Context, workspaceID string) (*plu
 	defer e.mu.Unlock()
 	revision := uint64(0)
 	if e.Granted {
-		revision = 7
+		revision = e.ApprovalRevision
 	}
 	return &pluginsdk.CapabilityContext{
 		WorkspaceID: workspaceID, ManifestDigest: ManifestDigest, ApprovalRevision: revision,
@@ -283,37 +297,61 @@ type commands struct {
 	pluginsdk.ExactTaskCommandManager
 }
 
+// Archive mirrors ArchiveTaskExact in kandev v0.97.0
+// (internal/plugins/host_exact_tasks.go): a denied call is rejected before a
+// receipt exists; otherwise the result is recorded against the idempotency
+// key and replayed for the same payload, a different payload under that key
+// is a conflict, and only UNAVAILABLE is left unrecorded so it can be retried.
 func (c commands) Archive(_ context.Context, in pluginsdk.ExactTaskArchive) (*pluginsdk.CommandResult, *pluginsdk.Task, error) {
 	h := c.h
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ArchiveCalls++
-	if override := h.ArchiveStatus; override != "" {
-		h.ArchiveStatus = ""
-		return &pluginsdk.CommandResult{Status: override, Reason: "forced"}, nil, nil
+	if in.RequestID == "" || in.IdempotencyKey == "" || in.WorkspaceID == "" || in.ExpectedResourceVersion == "" {
+		return &pluginsdk.CommandResult{Status: pluginsdk.CommandInvalid, Reason: "invalid_request"}, nil, nil
 	}
-	if !h.Granted || in.ApprovalRevision == 0 || in.ManifestDigest != ManifestDigest {
+	if !h.Granted || in.ApprovalRevision != h.ApprovalRevision || in.ManifestDigest != ManifestDigest {
 		return &pluginsdk.CommandResult{Status: pluginsdk.CommandDenied, Reason: "approval_missing"}, nil, nil
 	}
-	if in.RequestID == "" || in.IdempotencyKey == "" || in.WorkspaceID == "" {
-		return &pluginsdk.CommandResult{Status: pluginsdk.CommandInvalid}, nil, nil
+	digest := strings.Join([]string{in.WorkspaceID, in.TaskID, in.ExpectedResourceVersion,
+		in.ManifestDigest, strconv.FormatUint(in.ApprovalRevision, 10)}, "|")
+	if r, ok := h.receipts[in.IdempotencyKey]; ok {
+		if r.digest != digest {
+			return &pluginsdk.CommandResult{Status: pluginsdk.CommandConflict, Reason: "idempotency_payload_mismatch"}, nil, nil
+		}
+		h.Replays++
+		return &pluginsdk.CommandResult{Status: r.status, Reason: "replayed"}, nil, nil
 	}
-	if h.seenKeys[in.IdempotencyKey] {
-		return &pluginsdk.CommandResult{Status: pluginsdk.CommandAlreadyApplied}, nil, nil
+	status := h.ArchiveStatus
+	h.ArchiveStatus = ""
+	if status == "" {
+		t, ok := h.tasks[in.TaskID]
+		switch {
+		case !ok:
+			status = pluginsdk.CommandNotFound
+		case t.WorkspaceID != in.WorkspaceID || t.ResourceVersion != in.ExpectedResourceVersion || t.ArchivedAt != nil:
+			status = pluginsdk.CommandConflict
+		default:
+			at := "2026-01-01T00:00:00Z"
+			t.ArchivedAt = &at
+			t.ResourceVersion = h.nextVersion()
+			status = pluginsdk.CommandApplied
+		}
 	}
-	t, ok := h.tasks[in.TaskID]
-	if !ok {
-		return &pluginsdk.CommandResult{Status: pluginsdk.CommandNotFound}, nil, nil
+	if status != pluginsdk.CommandUnavailable {
+		h.receipts[in.IdempotencyKey] = receipt{digest: digest, status: status}
 	}
-	if t.WorkspaceID != in.WorkspaceID || t.ResourceVersion != in.ExpectedResourceVersion || t.ArchivedAt != nil {
-		return &pluginsdk.CommandResult{Status: pluginsdk.CommandConflict}, nil, nil
+	var out *pluginsdk.Task
+	if t, ok := h.tasks[in.TaskID]; ok && status == pluginsdk.CommandApplied {
+		cp := *t
+		out = &cp
 	}
-	at := "2026-01-01T00:00:00Z"
-	t.ArchivedAt = &at
-	t.ResourceVersion = h.nextVersion()
-	h.seenKeys[in.IdempotencyKey] = true
-	cp := *t
-	return &pluginsdk.CommandResult{Status: pluginsdk.CommandApplied}, &cp, nil
+	return &pluginsdk.CommandResult{Status: status}, out, nil
+}
+
+type receipt struct {
+	digest string
+	status pluginsdk.CommandStatus
 }
 
 var (

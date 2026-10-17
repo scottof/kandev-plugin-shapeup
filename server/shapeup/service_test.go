@@ -38,6 +38,18 @@ func TestService_StartCycleAfterOverdueCycleRunsTheBreakerFirst(t *testing.T) {
 	require.Len(t, f.snapshot(t).History, 1)
 }
 
+func TestService_StartCycleWhileTheBreakerIsBlocked(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.host.Granted = false
+	f.pastDeadline()
+
+	_, err := f.svc.StartCycle(ctx, "ws1", "Next", 7)
+	require.ErrorIs(t, err, ErrCycleStuck)
+	require.ErrorIs(t, f.svc.MarkShipped(ctx, "ws1", "t1"), ErrCycleOverdue)
+}
+
 func TestService_PlaceBet(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)

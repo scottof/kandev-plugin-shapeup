@@ -30,6 +30,15 @@ func NewService(host pluginsdk.Host, now func() time.Time, newID func() string) 
 	return &Service{host: host, store: NewStore(host), now: now, newID: newID}
 }
 
+// SetHost swaps the Host after a reconnect, waiting for any operation in
+// flight.
+func (s *Service) SetHost(host pluginsdk.Host) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.host = host
+	s.store = NewStore(host)
+}
+
 // Snapshot is what the betting table page renders.
 type Snapshot struct {
 	Now      time.Time     `json:"now"`
@@ -83,7 +92,7 @@ func (s *Service) StartCycle(ctx context.Context, workspaceID, name string, days
 	if active != nil && active.Overdue(s.now()) {
 		// The breaker could not finish (for example a missing grant); a new
 		// cycle must not hide the unfinished cut.
-		return nil, ErrCycleActive
+		return nil, ErrCycleStuck
 	}
 	c, err := StartCycle(active, s.newID(), name, days, s.now())
 	if err != nil {
@@ -137,8 +146,8 @@ func (s *Service) CutNow(ctx context.Context, workspaceID, taskID string) error 
 // cycle, tasks at the betting table first, then by title.
 func (s *Service) Candidates(ctx context.Context, workspaceID string) ([]Candidate, error) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	active, err := s.store.Active(ctx, workspaceID)
-	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}

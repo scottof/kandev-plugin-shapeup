@@ -66,8 +66,12 @@ func (c *Cycle) PlaceBet(taskID, title string, appetite Appetite, now time.Time)
 	return nil
 }
 
-// MarkShipped closes an active bet as shipped.
+// MarkShipped closes an active bet as shipped. Past the deadline only a cut
+// is possible: shipping late would extend the cycle.
 func (c *Cycle) MarkShipped(taskID string, now time.Time) error {
+	if c.Overdue(now) {
+		return ErrCycleOverdue
+	}
 	return c.closeBet(taskID, BetShipped, now)
 }
 

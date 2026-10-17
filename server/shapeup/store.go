@@ -54,15 +54,20 @@ func (s *Store) Active(ctx context.Context, workspaceID string) (*Cycle, error) 
 }
 
 // SaveActive writes the active cycle and makes sure the workspace is indexed.
+// The index comes first: an indexed workspace without a cycle is harmless,
+// while a cycle missing from the index would escape the background breaker.
 func (s *Store) SaveActive(ctx context.Context, workspaceID string, c *Cycle) error {
 	value, err := encode(map[string]any{"cycle": c})
 	if err != nil {
 		return err
 	}
+	if err := s.updateIndex(ctx, workspaceID, true); err != nil {
+		return err
+	}
 	if err := s.host.SetState(ctx, scopeWorkspace, workspaceID, keyActive, value); err != nil {
 		return fmt.Errorf("writing active cycle: %w", err)
 	}
-	return s.updateIndex(ctx, workspaceID, true)
+	return nil
 }
 
 // Archive stores a closed cycle in the history, then removes it as the

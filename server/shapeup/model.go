@@ -100,6 +100,7 @@ var (
 	ErrNoActiveCycle   = &Error{KindConflict, "There is no active cycle. Start one first."}
 	ErrCycleClosed     = &Error{KindConflict, "This cycle is closed."}
 	ErrCycleOverdue    = &Error{KindConflict, "The cycle deadline has passed. Start a new cycle."}
+	ErrCycleStuck      = &Error{KindConflict, "The last cycle is past its deadline but some bets could not be cut yet. Fix the problem shown on its bets first."}
 	ErrDuplicateBet    = &Error{KindConflict, "This task already has a bet in this cycle."}
 	ErrBetNotActive    = &Error{KindConflict, "This bet is already closed."}
 	ErrActiveBets      = &Error{KindConflict, "Some bets are still active."}

@@ -15,9 +15,10 @@ var ErrArchiveFailed = &Error{KindConflict, "The task could not be archived"}
 
 // Messages stored on a bet and shown on the betting table page.
 const (
-	reasonNoExact  = "This kandev version cannot archive tasks for plugins."
+	reasonNoExact  = "This kandev version cannot archive tasks for plugins. Archive the task by hand to finish the cut."
 	reasonNoGrant  = "Archiving needs the host.v2.write:tasks grant: open Settings > Plugins > Shape Up > Workspace access."
-	reasonConflict = "The task changed while it was being archived. Retrying."
+	reasonConflict = "kandev refused to archive this task (it changed, or another plugin manages it). It is retried when the task changes, or archive it by hand to finish the cut."
+	reasonRejected = "kandev rejected the archive request. Archive the task by hand to finish the cut."
 	reasonRetry    = "Archiving did not complete. Retrying."
 )
 
@@ -98,10 +99,13 @@ func (s *Service) archive(ctx context.Context, workspaceID, cycleID string, task
 	if !archiveAuthorized(capability) {
 		return reasonNoGrant
 	}
-	// The key includes the observed version: the Host rejects a reused key
-	// with a different payload, and a retry after a conflict needs the
-	// task's new version.
-	key := fmt.Sprintf("shapeup:cut:%s:%s:%s", cycleID, task.ID, task.ResourceVersion)
+	// The Host records every result except UNAVAILABLE against the key and
+	// replays it for the same payload, and answers a reused key with a
+	// different payload as a conflict. The key therefore covers everything in
+	// the payload that can change: the task version and the approval
+	// revision. An unchanged request replays its old result without a new
+	// Host receipt; a changed task or a re-saved grant gets a fresh attempt.
+	key := fmt.Sprintf("shapeup:cut:%s:%s:%s:%d", cycleID, task.ID, task.ResourceVersion, capability.ApprovalRevision)
 	result, _, err := commands.Archive(ctx, pluginsdk.ExactTaskArchive{
 		RequestID:               key,
 		WorkspaceID:             workspaceID,
@@ -121,6 +125,8 @@ func (s *Service) archive(ctx context.Context, workspaceID, cycleID string, task
 		return reasonNoGrant
 	case pluginsdk.CommandConflict:
 		return reasonConflict
+	case pluginsdk.CommandInvalid, pluginsdk.CommandUnsupported:
+		return reasonRejected
 	default:
 		return reasonRetry
 	}

@@ -45,9 +45,13 @@ func newPlugin(now func() time.Time) *shapeupPlugin {
 
 func (p *shapeupPlugin) SetHost(host pluginsdk.Host) {
 	p.UnimplementedPlugin.SetHost(host)
-	svc := shapeup.NewService(host, p.now, newCycleID)
 	p.mu.Lock()
-	p.svc = svc
+	if p.svc == nil {
+		p.svc = shapeup.NewService(host, p.now, newCycleID)
+	} else {
+		// One Service, so one mutex guards every Host state write.
+		p.svc.SetHost(host)
+	}
 	p.mu.Unlock()
 	if p.breakerInterval > 0 {
 		p.startLoop.Do(func() { go p.breakerLoop() })

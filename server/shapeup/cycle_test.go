@@ -144,6 +144,18 @@ func TestShipAndCut(t *testing.T) {
 	}
 }
 
+// Past the deadline only the circuit breaker closes bets: shipping late would
+// extend the cycle.
+func TestMarkShipped_RejectedAfterDeadline(t *testing.T) {
+	c := activeCycle(t)
+	require.NoError(t, c.PlaceBet("t1", "T1", AppetiteSmall, t0))
+	late := t0.Add(14 * 24 * time.Hour)
+
+	require.ErrorIs(t, c.MarkShipped("t1", late), ErrCycleOverdue)
+	require.Equal(t, BetActive, c.Bets[0].Status)
+	require.NoError(t, c.Cut("t1", late), "cutting stays possible")
+}
+
 func TestOverdueAndTimeLeft(t *testing.T) {
 	c := activeCycle(t)
 	end := t0.Add(14 * 24 * time.Hour)

@@ -30,6 +30,26 @@ func TestSetHost_RunsBreakerAtStartup(t *testing.T) {
 	require.Eventually(t, func() bool { return host.Archived("t1") }, 2*time.Second, 10*time.Millisecond)
 }
 
+// A second Host injection must not create a second Service: two services
+// would have two mutexes and could overwrite each other's state writes.
+func TestSetHost_TwiceKeepsOneService(t *testing.T) {
+	ctx := context.Background()
+	first, second := fakehost.New(), fakehost.New()
+	p := newPlugin(func() time.Time { return t0 })
+	p.breakerInterval = 0
+
+	p.SetHost(first.AsHost())
+	svc := p.service()
+	p.SetHost(second.AsHost())
+	require.Same(t, svc, p.service())
+
+	_, err := p.service().StartCycle(ctx, "ws1", "C", 7)
+	require.NoError(t, err)
+	got, err := shapeup.NewStore(second).Active(ctx, "ws1")
+	require.NoError(t, err)
+	require.NotNil(t, got, "the service talks to the latest Host")
+}
+
 func TestNewCycleID(t *testing.T) {
 	a, b := newCycleID(), newCycleID()
 	require.Len(t, a, 17)

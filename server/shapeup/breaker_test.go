@@ -143,27 +143,85 @@ func TestBreaker_MissingGrantKeepsCycleOpenUntilGranted(t *testing.T) {
 	require.Nil(t, f.snapshot(t).Active)
 }
 
-func TestBreaker_RetriesAfterConflictOrUncertainResult(t *testing.T) {
-	for _, status := range []pluginsdk.CommandStatus{pluginsdk.CommandConflict, pluginsdk.CommandUncertain, pluginsdk.CommandUnavailable} {
-		t.Run(string(status), func(t *testing.T) {
-			ctx := context.Background()
-			f := newFixture(t)
-			f.cycleWithBets(t, "t1")
-			f.pastDeadline()
-			f.host.ArchiveStatus = status
+// storedActive reads the store directly: Snapshot would run the breaker again.
+func (f *fixture) storedActive(t *testing.T) *Cycle {
+	t.Helper()
+	active, err := NewStore(f.host).Active(context.Background(), "ws1")
+	require.NoError(t, err)
+	return active
+}
 
-			require.NoError(t, f.svc.RunBreaker(ctx))
-			// Read the store directly: Snapshot would run the breaker again.
-			active, err := NewStore(f.host).Active(ctx, "ws1")
-			require.NoError(t, err)
-			require.NotNil(t, active)
-			require.NotEmpty(t, active.Bets[0].Error)
+func TestBreaker_RetriesWhenHostIsUnavailable(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+	f.host.ArchiveStatus = pluginsdk.CommandUnavailable
 
-			require.NoError(t, f.svc.RunBreaker(ctx))
-			require.True(t, f.host.Archived("t1"))
-			require.Nil(t, f.snapshot(t).Active)
-		})
-	}
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	active := f.storedActive(t)
+	require.NotNil(t, active)
+	require.Equal(t, reasonRetry, active.Bets[0].Error)
+
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.True(t, f.host.Archived("t1"))
+	require.Nil(t, f.snapshot(t).Active)
+}
+
+// The Host records a conflict against the idempotency key and replays it for
+// the same payload, so a conflict is retried only once the task changed.
+func TestBreaker_ConflictRetriesOnlyAfterTheTaskChanges(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+	f.host.ArchiveStatus = pluginsdk.CommandConflict
+
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.Equal(t, 1, f.host.Replays, "the unchanged request is answered from the receipt")
+	active := f.storedActive(t)
+	require.NotNil(t, active)
+	require.Equal(t, reasonConflict, active.Bets[0].Error)
+	require.Contains(t, reasonConflict, "archive it by hand", "a human can always finish the cut")
+
+	f.host.TouchTask("t1")
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.True(t, f.host.Archived("t1"))
+	require.Nil(t, f.snapshot(t).Active)
+}
+
+// The approval revision is part of the Host's payload digest. Re-saving the
+// grant must not reuse a key recorded under the old revision.
+func TestBreaker_NewGrantRevisionUsesANewKey(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+	f.host.ArchiveStatus = pluginsdk.CommandInvalid
+
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.Equal(t, reasonRejected, f.storedActive(t).Bets[0].Error)
+
+	f.host.ApprovalRevision = 8
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	require.True(t, f.host.Archived("t1"))
+	require.Nil(t, f.snapshot(t).Active)
+}
+
+func TestBreaker_HumanArchiveFinishesABlockedCut(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+	f.host.ArchiveStatus = pluginsdk.CommandConflict
+	require.NoError(t, f.svc.RunBreaker(ctx))
+
+	f.host.ArchiveDirectly("t1")
+	require.NoError(t, f.svc.RunBreaker(ctx))
+	history := f.snapshot(t).History
+	require.Len(t, history, 1)
+	require.Equal(t, BetCut, history[0].Bet("t1").Status)
 }
 
 func TestBreaker_HostWithoutExactCommands(t *testing.T) {

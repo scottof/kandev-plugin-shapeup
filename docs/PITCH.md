@@ -1,5 +1,7 @@
 # Pitch: Shape Up for kandev, v1
 
+This pitch follows the method in the book [Shape Up](https://basecamp.com/shapeup).
+
 ## Problem
 
 Agents make it cheap to start everything. With several side projects running in kandev at once, the hard part is no

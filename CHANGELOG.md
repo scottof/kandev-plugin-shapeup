@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.1] - 2026-10-17
+
+### Added
+
+- The README and `docs/PITCH.md` link to the Shape Up book
+  (https://basecamp.com/shapeup).
+
+### Fixed
+
+- If you start a change in workspace A, switch to workspace B, start another
+  change there and return to A before the first one finishes, the buttons in A
+  now stay disabled until that first change finishes. Before, they were enabled
+  again too early.
+
 ## [0.1.0] - 2026-10-17
 
 First release, started from `kdlbs/kandev-plugin-template`.
@@ -23,10 +37,3 @@ First release, started from `kdlbs/kandev-plugin-template`.
   timed out) is shown as cut.
 - A cycle holds at most 50 bets. Only the 12 most recent past cycles are kept
   and shown; older ones are deleted when a cycle closes.
-
-### Known issues
-
-- If you start a change in workspace A, switch to workspace B, start another
-  change there and return to A before the first one finishes, the buttons in A
-  are enabled again too early. A second submit is refused by the plugin with a
-  conflict, so no data is lost.

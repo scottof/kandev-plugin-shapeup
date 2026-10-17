@@ -418,15 +418,17 @@ function makeBettingTablePage(host) {
     // dropped instead of drawing that workspace's cycle here.
     const currentWorkspace = React.useRef(workspaceId);
     currentWorkspace.current = workspaceId;
-    // The latest mutation. Only its reply may clear busy, so an older reply
-    // cannot re-enable the buttons while a newer mutation is in flight.
-    const lastRun = React.useRef({ id: 0, workspace: "", pending: false });
+    // Mutations still in flight per workspace. Busy follows the count of the
+    // workspace shown, so no reply clears it while another one there is
+    // pending, whatever ran in other workspaces meanwhile.
+    const pendingRuns = React.useRef(new Map());
+    const pendingIn = (ws) => pendingRuns.current.get(ws) || 0;
 
     // A mutation still running for another workspace does not block this
-    // one, but coming back to its workspace blocks it again.
-    React.useEffect(() => {
-      const last = lastRun.current;
-      setBusy(last.pending && last.workspace === workspaceId);
+    // one, but coming back to its workspace blocks it again. A layout effect
+    // so the buttons are never painted enabled in between.
+    React.useLayoutEffect(() => {
+      setBusy(pendingIn(workspaceId) > 0);
     }, [workspaceId]);
 
     React.useEffect(() => {
@@ -453,8 +455,7 @@ function makeBettingTablePage(host) {
     const run = (key, body, success) => {
       const requested = workspaceId;
       const stale = () => currentWorkspace.current !== requested;
-      const id = lastRun.current.id + 1;
-      lastRun.current = { id, workspace: requested, pending: true };
+      pendingRuns.current.set(requested, pendingIn(requested) + 1);
       setBusy(true);
       return invoke(key, requested, body)
         .then((data) => {
@@ -469,10 +470,11 @@ function makeBettingTablePage(host) {
           return false;
         })
         .finally(() => {
-          if (lastRun.current.id !== id) return;
-          lastRun.current = { ...lastRun.current, pending: false };
-          // The workspace switch already cleared busy for the new workspace.
-          if (!stale()) setBusy(false);
+          const left = pendingIn(requested) - 1;
+          if (left > 0) pendingRuns.current.set(requested, left);
+          else pendingRuns.current.delete(requested);
+          // In another workspace, busy was already set by the switch.
+          if (!stale() && left === 0) setBusy(false);
         });
     };
 

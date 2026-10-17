@@ -11,7 +11,9 @@
 - Circuit breaker: at the cycle deadline every active bet is cut and its task
   archived, then the cycle closes. Runs every minute, at plugin start and
   before page actions. Needs the `host.v2.write:tasks` workspace grant.
-  Each archive gets its own 25 second budget.
+  Each archive gets its own 25 second budget. A run stops starting archives
+  once its own deadline passes and keeps what it cut; the remaining bets are
+  cut on the next run.
 - Only a kandev administrator can start a cycle, place a bet, mark a bet
   shipped or use Cut now. Other members can view the betting table.
   The page tells a non-admin that only an administrator can make the change.

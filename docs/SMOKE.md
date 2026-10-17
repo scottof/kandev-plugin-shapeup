@@ -11,7 +11,7 @@ circuit breaker really archives them.
 export GOTOOLCHAIN=auto
 make verify-package-host
 curl --fail --show-error \
-  -F 'package=@kandev-plugin-shapeup-0.1.0.tar.gz;type=application/gzip' \
+  -F 'package=@kandev-plugin-shapeup-0.1.1.tar.gz;type=application/gzip' \
   http://localhost:38429/api/plugins/install
 ```
 
@@ -75,5 +75,5 @@ page):
    closes.
 
 Write down the kandev version, the package archive digest
-(`shasum -a 256 kandev-plugin-shapeup-0.1.0.tar.gz`) and the result of each
+(`shasum -a 256 kandev-plugin-shapeup-0.1.1.tar.gz`) and the result of each
 step.

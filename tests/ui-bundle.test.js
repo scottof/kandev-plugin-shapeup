@@ -12,13 +12,24 @@ function element(type, props, ...children) {
 // recorded), effects run at once and their cleanups are collected so timers
 // do not outlive the test. initialStates, when given, replaces the initial
 // value of the n-th useState call; refs collects every useRef object and
-// effects records each useEffect's callback and dependency array.
-// beginRender starts a re-render: refs persist, and an effect runs again
-// (after its previous cleanup) only when its dependencies changed.
+// effects records each useEffect's (or useLayoutEffect's) callback and
+// dependency array. beginRender starts a re-render: refs persist, and an
+// effect runs again (after its previous cleanup) only when its dependencies
+// changed.
 function fakeReact(cleanups, setCalls, initialStates = {}, refs = [], effects = []) {
   let stateIndex = 0;
   let refIndex = 0;
   let effectIndex = 0;
+  const useEffect = (fn, deps) => {
+    const i = effectIndex++;
+    const prev = effects[i];
+    const same = prev && deps && prev.deps && deps.length === prev.deps.length && deps.every((d, k) => Object.is(d, prev.deps[k]));
+    if (same) return;
+    if (prev && prev.cleanup) prev.cleanup();
+    const cleanup = fn();
+    effects[i] = { fn, deps, cleanup: typeof cleanup === "function" ? cleanup : null };
+    if (typeof cleanup === "function") cleanups.push(cleanup);
+  };
   return {
     beginRender: () => {
       stateIndex = 0;
@@ -30,16 +41,8 @@ function fakeReact(cleanups, setCalls, initialStates = {}, refs = [], effects = 
       const value = i in initialStates ? initialStates[i] : typeof init === "function" ? init() : init;
       return [value, (v) => setCalls.push(v)];
     },
-    useEffect: (fn, deps) => {
-      const i = effectIndex++;
-      const prev = effects[i];
-      const same = prev && deps && prev.deps && deps.length === prev.deps.length && deps.every((d, k) => Object.is(d, prev.deps[k]));
-      if (same) return;
-      if (prev && prev.cleanup) prev.cleanup();
-      const cleanup = fn();
-      effects[i] = { fn, deps, cleanup: typeof cleanup === "function" ? cleanup : null };
-      if (typeof cleanup === "function") cleanups.push(cleanup);
-    },
+    useEffect,
+    useLayoutEffect: useEffect,
     useCallback: (fn) => fn,
     useRef: (value) => {
       const i = refIndex++;
@@ -325,6 +328,46 @@ test("returning to a workspace with a pending mutation keeps it busy", async () 
     pending[1]();
     await settle();
     assert.deepEqual(busyCalls(setCalls.slice(mark)), [false], "the latest reply clears busy");
+  } finally {
+    cleanups.forEach((fn) => fn());
+  }
+});
+
+// A1 pending, B1 submitted in B, back to A: A stays busy until A1 settles,
+// even though the latest mutation started belongs to B.
+test("a mutation in another workspace does not re-enable a pending one", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const setCalls = [];
+  const pending = {};
+  const host = makeHost({
+    cleanups,
+    setCalls,
+    initialStates: LOADED,
+    reply: (key, input) =>
+      key === "bet.cut" ? new Promise((r) => (pending[input.workspaceId] = () => r(ACTIVE_SNAPSHOT))) : new Promise(() => {}),
+  });
+  const { routes } = initialize(definition, host);
+  const render = (ws) => {
+    host.context.getActiveWorkspaceId = () => ws;
+    host.React.beginRender();
+    return routes[0].component();
+  };
+
+  try {
+    find(render("ws1"), byName("BetsTable")).props.onCut("t1");
+    find(render("ws2"), byName("BetsTable")).props.onCut("t1");
+    const mark = setCalls.length;
+    render("ws1");
+    assert.deepEqual(busyCalls(setCalls.slice(mark)), [true], "busy again in A");
+
+    pending.ws2();
+    await settle();
+    assert.deepEqual(busyCalls(setCalls.slice(mark)), [true], "B's reply leaves A busy");
+
+    pending.ws1();
+    await settle();
+    assert.deepEqual(busyCalls(setCalls.slice(mark)), [true, false], "A's own reply clears busy");
   } finally {
     cleanups.forEach((fn) => fn());
   }

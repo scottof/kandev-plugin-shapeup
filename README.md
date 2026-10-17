@@ -34,12 +34,12 @@ export GOTOOLCHAIN=auto
 make verify-package-host
 ```
 
-This writes `kandev-plugin-shapeup-0.1.0.tar.gz`. Install it from
+This writes `kandev-plugin-shapeup-0.1.1.tar.gz`. Install it from
 **Settings > Plugins** (upload the archive), or with curl:
 
 ```sh
 curl --fail --show-error \
-  -F 'package=@kandev-plugin-shapeup-0.1.0.tar.gz;type=application/gzip' \
+  -F 'package=@kandev-plugin-shapeup-0.1.1.tar.gz;type=application/gzip' \
   "$KANDEV_URL/api/plugins/install"
 ```
 

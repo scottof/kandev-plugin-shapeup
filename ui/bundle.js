@@ -408,34 +408,37 @@ function makeBettingTablePage(host) {
     const [state, setState] = React.useState({ loading: true, error: "", data: null });
     const [busy, setBusy] = React.useState(false);
     const [refreshKey, setRefreshKey] = React.useState(0);
-
-    const load = React.useCallback(() => {
-      if (!workspaceId) return undefined;
-      let live = true;
-      invoke("state.get", workspaceId).then(
-        (data) => live && setState({ loading: false, error: "", data }),
-        (err) => live && setState((s) => ({ loading: false, error: errorMessage(err), data: s.data })),
-      );
-      return () => {
-        live = false;
-      };
-    }, [workspaceId]);
+    const [reloadKey, setReloadKey] = React.useState(0);
+    // The workspace the page shows now. A reply for another workspace is
+    // dropped instead of drawing that workspace's cycle here.
+    const currentWorkspace = React.useRef(workspaceId);
+    currentWorkspace.current = workspaceId;
 
     React.useEffect(() => {
+      if (!workspaceId) return undefined;
+      // One flag per effect run covers the first load and every refresh.
+      let live = true;
+      const fetchState = () =>
+        invoke("state.get", workspaceId).then(
+          (data) => live && setState({ loading: false, error: "", data }),
+          (err) => live && setState((s) => ({ loading: false, error: errorMessage(err), data: s.data })),
+        );
       setState({ loading: true, error: "", data: null });
-      const cancel = load();
+      fetchState();
       // Picks up a circuit-breaker cut while the page stays open.
-      const timer = setInterval(load, REFRESH_MS);
+      const timer = setInterval(fetchState, REFRESH_MS);
       return () => {
+        live = false;
         clearInterval(timer);
-        if (cancel) cancel();
       };
-    }, [load]);
+    }, [workspaceId, reloadKey]);
 
     const run = (key, body, success) => {
+      const requested = workspaceId;
       setBusy(true);
-      invoke(key, workspaceId, body)
+      invoke(key, requested, body)
         .then((data) => {
+          if (currentWorkspace.current !== requested) return;
           setState({ loading: false, error: "", data });
           setRefreshKey((k) => k + 1);
           if (success) toast.success(success);
@@ -469,7 +472,11 @@ function makeBettingTablePage(host) {
           h(AlertTitle, null, "Could not load the betting table"),
           h(AlertDescription, null, state.error),
         ),
-        h(Button, { type: "button", variant: "outline", className: "mt-3", onClick: load }, "Try again"),
+        h(
+          Button,
+          { type: "button", variant: "outline", className: "mt-3", onClick: () => setReloadKey((k) => k + 1) },
+          "Try again",
+        ),
       );
     }
 

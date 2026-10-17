@@ -8,16 +8,18 @@ function element(type, props, ...children) {
   return { type, props: props || {}, children };
 }
 
-// A minimal stand-in for host.React: state never changes, effects run at once
-// and their cleanups are collected so timers do not outlive the test.
-function fakeReact(cleanups) {
+// A minimal stand-in for host.React: state never changes (setter calls are
+// recorded), effects run at once and their cleanups are collected so timers
+// do not outlive the test.
+function fakeReact(cleanups, setCalls) {
   return {
-    useState: (init) => [typeof init === "function" ? init() : init, () => {}],
+    useState: (init) => [typeof init === "function" ? init() : init, (v) => setCalls.push(v)],
     useEffect: (fn) => {
       const cleanup = fn();
       if (typeof cleanup === "function") cleanups.push(cleanup);
     },
     useCallback: (fn) => fn,
+    useRef: (value) => ({ current: value }),
   };
 }
 
@@ -37,11 +39,11 @@ async function loadPlugin() {
   return { mod, pluginId, definition };
 }
 
-function makeHost({ workspaceId = "ws1", calls = [], cleanups = [] } = {}) {
+function makeHost({ workspaceId = "ws1", calls = [], cleanups = [], setCalls = [], reply } = {}) {
   const ui = new Proxy({}, { get: (_, name) => String(name) });
   return {
     jsx: element,
-    React: fakeReact(cleanups),
+    React: fakeReact(cleanups, setCalls),
     ui,
     utils: { formatRelativeTime: (iso) => `relative(${iso})`, cn: (...c) => c.join(" ") },
     toast: { success() {}, error() {} },
@@ -53,7 +55,7 @@ function makeHost({ workspaceId = "ws1", calls = [], cleanups = [] } = {}) {
     api: {
       invokeAction(key, input) {
         calls.push({ key, input });
-        return new Promise(() => {});
+        return reply ? reply(key, input) : new Promise(() => {});
       },
     },
   };
@@ -98,6 +100,42 @@ test("the page loads its state for the active workspace through an action", asyn
 
   assert.equal(tree.props.id, "shapeup-loading", "renders a loading state first");
   assert.deepEqual(calls, [{ key: "state.get", input: { workspaceId: "ws1", body: {} } }]);
+});
+
+test("a refresh that resolves after the page moved on is dropped", async () => {
+  const { definition } = await loadPlugin();
+  const cleanups = [];
+  const setCalls = [];
+  const pending = [];
+  const host = makeHost({
+    cleanups,
+    setCalls,
+    reply: () => new Promise((r) => pending.push(r)),
+  });
+  const { routes } = initialize(definition, host);
+
+  const realSetInterval = globalThis.setInterval;
+  const realClearInterval = globalThis.clearInterval;
+  let tick;
+  globalThis.setInterval = (fn) => {
+    tick = fn;
+    return 1;
+  };
+  globalThis.clearInterval = () => {};
+  try {
+    routes[0].component();
+    tick(); // a periodic refresh is in flight...
+    const before = setCalls.length;
+    cleanups.forEach((fn) => fn()); // ...when the workspace changes
+    const snapshot = { now: "2026-10-01T09:00:00Z", active: null, history: [] };
+    pending.forEach((resolve) => resolve(snapshot));
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(pending.length, 2, "first load and one refresh");
+    assert.equal(setCalls.length, before, "no state update from a stale reply");
+  } finally {
+    globalThis.setInterval = realSetInterval;
+    globalThis.clearInterval = realClearInterval;
+  }
 });
 
 test("the page asks for a workspace instead of calling the backend without one", async () => {

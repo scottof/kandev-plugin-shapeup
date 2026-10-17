@@ -3,6 +3,7 @@ package shapeup
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -56,11 +57,13 @@ type Candidate struct {
 	AtBettingTable bool   `json:"at_betting_table"`
 }
 
+// Snapshot never fails because of the breaker or the archived-task check:
+// both are retried on the next run, and the page must keep rendering.
 func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.breakWorkspace(ctx, workspaceID); err != nil {
-		return Snapshot{}, err
+		log.Printf("circuit breaker: workspace %s: %v", workspaceID, err)
 	}
 	now := s.now()
 	active, err := s.store.Active(ctx, workspaceID)
@@ -68,7 +71,7 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string) (Snapshot, e
 		return Snapshot{}, err
 	}
 	if err := s.closeArchivedBets(ctx, workspaceID, active); err != nil {
-		return Snapshot{}, err
+		log.Printf("closing archived bets: workspace %s: %v", workspaceID, err)
 	}
 	history, err := s.store.History(ctx, workspaceID)
 	if err != nil {
@@ -122,7 +125,7 @@ func (s *Service) PlaceBet(ctx context.Context, workspaceID, taskID string, appe
 
 func (s *Service) MarkShipped(ctx context.Context, workspaceID, taskID string) error {
 	return s.withActive(ctx, workspaceID, func(c *Cycle) error {
-		return c.MarkShipped(taskID, s.now())
+		return c.MarkShipped(strings.TrimSpace(taskID), s.now())
 	})
 }
 

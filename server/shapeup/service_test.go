@@ -2,6 +2,7 @@ package shapeup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -125,7 +126,7 @@ func TestService_MarkShippedDoesNotArchive(t *testing.T) {
 	f := newFixture(t)
 	f.cycleWithBets(t, "t1")
 
-	require.NoError(t, f.svc.MarkShipped(ctx, "ws1", "t1"))
+	require.NoError(t, f.svc.MarkShipped(ctx, "ws1", " t1 "), "the task id is trimmed as in PlaceBet")
 	require.False(t, f.host.Archived("t1"))
 	require.Equal(t, BetShipped, f.snapshot(t).Active.Bet("t1").Status)
 	require.ErrorIs(t, f.svc.MarkShipped(ctx, "ws2", "t1"), ErrNoActiveCycle)
@@ -174,4 +175,23 @@ func TestService_SnapshotReturnsOnlyRecentHistory(t *testing.T) {
 	require.Len(t, history, MaxHistory)
 	require.Equal(t, fmt.Sprintf("old%02d", MaxHistory+1), history[0].ID, "newest first")
 	require.Equal(t, "old02", history[MaxHistory-1].ID)
+}
+
+// A failing breaker run must not take the page down: the page still shows
+// the cycle, and the next run retries.
+func TestService_SnapshotSurvivesABreakerFailure(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+	f.host.StateErr = errors.New("state unavailable")
+
+	snap, err := f.svc.Snapshot(ctx, "ws1")
+	require.NoError(t, err)
+	require.NotNil(t, snap.Active)
+	require.True(t, snap.Overdue)
+
+	f.host.StateErr = nil
+	require.Nil(t, f.snapshot(t).Active, "the next run finishes the cut")
+	require.Len(t, f.snapshot(t).History, 1)
 }

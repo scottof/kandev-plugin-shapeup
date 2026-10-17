@@ -101,10 +101,11 @@ func (s *Service) archive(ctx context.Context, workspaceID, cycleID string, task
 	}
 	// The Host records every result except UNAVAILABLE against the key and
 	// replays it for the same payload, and answers a reused key with a
-	// different payload as a conflict. The key therefore covers everything in
-	// the payload that can change: the task version and the approval
-	// revision. An unchanged request replays its old result without a new
-	// Host receipt; a changed task or a re-saved grant gets a fresh attempt.
+	// different payload as a conflict. The key therefore covers the task
+	// version, which is in the payload, so a changed task gets a fresh attempt
+	// instead of a conflict. The approval revision is not in the payload: it is
+	// in the key so a re-saved grant gets a fresh attempt instead of a replay
+	// of the result recorded under the old grant.
 	key := fmt.Sprintf("shapeup:cut:%s:%s:%s:%d", cycleID, task.ID, task.ResourceVersion, capability.ApprovalRevision)
 	result, _, err := commands.Archive(ctx, pluginsdk.ExactTaskArchive{
 		RequestID:               key,

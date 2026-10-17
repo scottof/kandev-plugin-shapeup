@@ -313,8 +313,10 @@ func (c commands) Archive(_ context.Context, in pluginsdk.ExactTaskArchive) (*pl
 	if !h.Granted || in.ApprovalRevision != h.ApprovalRevision || in.ManifestDigest != ManifestDigest {
 		return &pluginsdk.CommandResult{Status: pluginsdk.CommandDenied, Reason: "approval_missing"}, nil, nil
 	}
+	// Same fields as exactTaskArchiveDigest: the approval revision and manifest
+	// digest are checked at admission but are not part of the payload digest.
 	digest := strings.Join([]string{in.WorkspaceID, in.TaskID, in.ExpectedResourceVersion,
-		in.ManifestDigest, strconv.FormatUint(in.ApprovalRevision, 10)}, "|")
+		in.ManagementInstanceKey, strconv.FormatInt(in.ExpectedClaimGeneration, 10)}, "|")
 	if r, ok := h.receipts[in.IdempotencyKey]; ok {
 		if r.digest != digest {
 			return &pluginsdk.CommandResult{Status: pluginsdk.CommandConflict, Reason: "idempotency_payload_mismatch"}, nil, nil

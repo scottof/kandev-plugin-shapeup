@@ -191,8 +191,9 @@ func TestBreaker_ConflictRetriesOnlyAfterTheTaskChanges(t *testing.T) {
 	require.Nil(t, f.snapshot(t).Active)
 }
 
-// The approval revision is part of the Host's payload digest. Re-saving the
-// grant must not reuse a key recorded under the old revision.
+// The Host replays a recorded result for the same key and payload, and the
+// approval revision is not in the payload. Re-saving the grant must not reuse
+// a key recorded under the old revision, or the old rejection is replayed.
 func TestBreaker_NewGrantRevisionUsesANewKey(t *testing.T) {
 	ctx := context.Background()
 	f := newFixture(t)

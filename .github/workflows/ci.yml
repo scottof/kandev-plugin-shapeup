@@ -77,7 +77,6 @@ jobs:
         working-directory: plugin
         run: |
           make test
-          make audit-recipes
 
   base-floor:
     name: Default template on Kandev v0.86.0

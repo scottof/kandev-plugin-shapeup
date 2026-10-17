@@ -9,12 +9,12 @@ VERSION := 0.1.0
 STAGE := .build/stage
 PKG_OUT := $(notdir $(BIN))-$(VERSION).tar.gz
 
-# The sibling kandev checkout the `replace` in go.mod points at (see README,
-# "Developing against the SDK"). The packaging step runs plugin-pack from
+# The sibling kandev checkout the `replace` in go.mod points at (see the
+# "Develop" section of the README). The packaging step runs plugin-pack from
 # INSIDE this directory, i.e. in kandev's own module context, rather than as
 # `go run github.com/kandev/kandev/cmd/plugin-pack` from here. Both spellings
 # work, but the second resolves plugin-pack's dependencies against *this*
-# module's go.sum — and plugin-pack imports far more of the kandev backend
+# module's go.sum, and plugin-pack imports far more of the kandev backend
 # than server/ does, so those entries are absent and packaging dies with
 # "missing go.sum entry". Adding them would mean this plugin's go.sum has to
 # track every dependency the kandev backend grows, which `go mod tidy` then
@@ -75,7 +75,7 @@ package:
 	rm -rf $(STAGE)
 	@echo "Wrote $(PKG_OUT)"
 
-## Package for the host platform only — faster local iteration than the full
+## Package for the host platform only: faster local iteration than the full
 ## 5-platform `make package` (matches plugin-pack's -platform-only).
 package-host:
 	rm -rf $(STAGE)

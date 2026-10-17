@@ -86,10 +86,10 @@ tasks`). Host v2 capabilities may need a workspace grant in Settings > Plugins; 
 
 - The checks listed in the README are green and `make verify-package-host` produces a tarball.
 - README explains install, the workspace grant, importing the workflow, and a first cycle.
-- A smoke test plan Michele can run on his kandev (localhost:38429): install the tarball, import the workflow, start a
-  cycle a few minutes long, bet on a throwaway task, and watch the circuit breaker archive it.
+- A smoke test plan for a local kandev: install the tarball, import the workflow, start a cycle a few minutes long,
+  bet on a throwaway task, and watch the circuit breaker archive it.
 
 ## Circuit breaker for this project
 
-If after one real cycle on his own projects Michele has not used the plugin to make a single real decision about
-stopping or re-betting something, the project stops there.
+If after one real cycle on real projects the plugin has not been used to make a single real decision about stopping
+or re-betting something, the project stops there.

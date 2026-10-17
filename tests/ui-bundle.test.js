@@ -417,5 +417,5 @@ test("timeLeftLabel uses the host's locale-aware relative time", async () => {
 
 test("UI copy has no em dashes", async () => {
   const source = await readFile(new URL("../ui/bundle.js", import.meta.url), "utf8");
-  assert.equal(source.includes("—"), false);
+  assert.equal(source.includes("\u2014"), false);
 });

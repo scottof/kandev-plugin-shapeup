@@ -139,3 +139,9 @@ make verify-package-host
 `make test` runs the backend and UI tests plus the package and release
 verifier tests. The smoke test on a real kandev is in
 [`docs/SMOKE.md`](docs/SMOKE.md).
+
+## About
+
+Built with Claude Code agents running in Kandev.
+
+Licensed under the MIT License, see [`LICENSE`](LICENSE).

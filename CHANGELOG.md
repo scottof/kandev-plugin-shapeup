@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## [0.1.0] - 2026-10-17
+
+First release, started from `kdlbs/kandev-plugin-template`.
 
 ### Added
 
@@ -22,30 +24,9 @@
 - A cycle holds at most 50 bets. Only the 12 most recent past cycles are kept
   and shown; older ones are deleted when a cycle closes.
 
-### Changed
+### Known issues
 
-- The plugin is now `kandev-plugin-shapeup` 0.1.0, manifest API version 2,
-  requiring kandev 0.97.0 or later.
-- `make verify-package-host` accepts the manifest that plugin-pack rewrites
-  for a host-only package.
-
-### Removed
-
-- The template's demo page, composer action, `ping` webhook, demo settings and
-  the source-control recipe.
-
-## [0.2.0] - 2026-10-05
-
-### Changed
-
-- feat(template): adopt host Action and harden release checks (#8) (b6d5a7c)
-- Fix marketplace release archive checksum (#9) (b13b7ee)
-- feat: add provider-neutral source-control recipe (#6) (be2f0c5)
-- Teach the post-0.86 host surface (#5) (c107c22)
-- chore(security): bump x/net & x/text, pin CI actions to commit SHA (#3) (e034b08)
-- ci: add manual release workflow (#2) (bd7aed6)
-- ci: standardize plugin automation (542f331)
-- docs: describe release checksums.txt as advisory, not index-pinned (2c5fd80)
-- ci: add release workflow that publishes package + checksums on tag (a25f3d3)
-- chore: scaffold kandev plugin template (526ca58)
-
+- If you start a change in workspace A, switch to workspace B, start another
+  change there and return to A before the first one finishes, the buttons in A
+  are enabled again too early. A second submit is refused by the plugin with a
+  conflict, so no data is lost.

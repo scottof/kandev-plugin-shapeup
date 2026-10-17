@@ -5,6 +5,7 @@ package shapeup
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
@@ -106,7 +107,7 @@ var (
 	ErrCycleOverdue    = &Error{KindConflict, "The cycle deadline has passed. Start a new cycle."}
 	ErrCycleStuck      = &Error{KindConflict, "The last cycle is past its deadline but some bets could not be cut yet. Fix the problem shown on its bets first."}
 	ErrDuplicateBet    = &Error{KindConflict, "This task already has a bet in this cycle."}
-	ErrTooManyBets     = &Error{KindConflict, "This cycle already has 50 bets, the most a cycle can hold."}
+	ErrTooManyBets     = &Error{KindConflict, fmt.Sprintf("This cycle already has %d bets, the most a cycle can hold.", MaxBetsPerCycle)}
 	ErrBetNotActive    = &Error{KindConflict, "This bet is already closed."}
 	ErrActiveBets      = &Error{KindConflict, "Some bets are still active."}
 	ErrBetNotFound     = &Error{KindNotFound, "No bet for this task in the active cycle."}

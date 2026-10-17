@@ -202,3 +202,7 @@ func TestErrorKinds(t *testing.T) {
 	require.Equal(t, KindNotFound, KindOf(ErrBetNotFound))
 	require.Equal(t, KindUnknown, KindOf(errors.New("boom")))
 }
+
+func TestErrTooManyBets_NamesTheCap(t *testing.T) {
+	require.Contains(t, ErrTooManyBets.Error(), fmt.Sprintf(" %d ", MaxBetsPerCycle))
+}

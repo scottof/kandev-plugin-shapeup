@@ -221,3 +221,12 @@ func TestService_ListsTasksOncePerCall(t *testing.T) {
 		return err
 	}), "snapshot of an overdue cycle")
 }
+
+func TestService_CutNowTrimsTheTaskID(t *testing.T) {
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+
+	require.NoError(t, f.svc.CutNow(context.Background(), "ws1", " t1 "))
+	require.True(t, f.host.Archived("t1"))
+	require.Equal(t, BetCut, f.snapshot(t).Active.Bet("t1").Status)
+}

@@ -137,6 +137,7 @@ func (s *Service) MarkShipped(ctx context.Context, workspaceID, taskID string) e
 // CutNow archives the bet's task and marks the bet cut. When the archive
 // fails the bet stays active and the error says why.
 func (s *Service) CutNow(ctx context.Context, workspaceID, taskID string) error {
+	taskID = strings.TrimSpace(taskID)
 	return s.withActive(ctx, workspaceID, func(c *Cycle, tasks *taskList) error {
 		bet := c.Bet(taskID)
 		if bet == nil {

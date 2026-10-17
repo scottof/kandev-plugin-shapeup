@@ -40,6 +40,8 @@ type Host struct {
 	ArchiveCalls int
 	// Replays counts archive calls answered from a recorded receipt.
 	Replays int
+	// ArchiveDeadline is the context deadline of the last archive call.
+	ArchiveDeadline time.Time
 	// ArchiveStatus, when set, is the result of the next newly admitted
 	// archive instead of archiving.
 	ArchiveStatus pluginsdk.CommandStatus
@@ -302,11 +304,15 @@ type commands struct {
 // receipt exists; otherwise the result is recorded against the idempotency
 // key and replayed for the same payload, a different payload under that key
 // is a conflict, and only UNAVAILABLE is left unrecorded so it can be retried.
-func (c commands) Archive(_ context.Context, in pluginsdk.ExactTaskArchive) (*pluginsdk.CommandResult, *pluginsdk.Task, error) {
+func (c commands) Archive(ctx context.Context, in pluginsdk.ExactTaskArchive) (*pluginsdk.CommandResult, *pluginsdk.Task, error) {
 	h := c.h
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.ArchiveCalls++
+	h.ArchiveDeadline, _ = ctx.Deadline()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err // as the gRPC client does
+	}
 	if in.RequestID == "" || in.IdempotencyKey == "" || in.WorkspaceID == "" || in.ExpectedResourceVersion == "" {
 		return &pluginsdk.CommandResult{Status: pluginsdk.CommandInvalid, Reason: "invalid_request"}, nil, nil
 	}

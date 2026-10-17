@@ -261,3 +261,21 @@ func TestBreaker_ChecksEveryIndexedWorkspace(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"ws2"}, ids)
 }
+
+// Archiving stops running agents and can take far longer than a state read.
+// Each archive gets its own budget, so a long one cannot starve the next and
+// a caller close to its own deadline does not abort an archive midway.
+func TestBreaker_EachArchiveHasItsOwnTimeout(t *testing.T) {
+	f := newFixture(t)
+	f.cycleWithBets(t, "t1")
+	f.pastDeadline()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Nanosecond)
+	defer cancel()
+	<-ctx.Done()
+	start := time.Now()
+	require.NoError(t, f.svc.RunBreaker(ctx))
+
+	require.True(t, f.host.Archived("t1"))
+	require.WithinRange(t, f.host.ArchiveDeadline, start.Add(ArchiveTimeout-time.Second), time.Now().Add(ArchiveTimeout))
+}

@@ -13,10 +13,7 @@ import (
 	"kandev-plugin-shapeup/server/shapeup"
 )
 
-const (
-	defaultBreakerInterval = time.Minute
-	breakerRunTimeout      = 30 * time.Second
-)
+const defaultBreakerInterval = time.Minute
 
 // shapeupPlugin serves the betting table actions and runs the circuit
 // breaker. kandev has no plugin start hook, but it injects the Host once per
@@ -75,10 +72,10 @@ func (p *shapeupPlugin) breakerLoop() {
 	}
 }
 
+// runBreaker has no overall deadline: RunBreaker bounds each workspace and
+// each archive call on its own.
 func (p *shapeupPlugin) runBreaker() {
-	ctx, cancel := context.WithTimeout(context.Background(), breakerRunTimeout)
-	defer cancel()
-	if err := p.service().RunBreaker(ctx); err != nil {
+	if err := p.service().RunBreaker(context.Background()); err != nil {
 		log.Printf("circuit breaker: %v", err)
 	}
 }

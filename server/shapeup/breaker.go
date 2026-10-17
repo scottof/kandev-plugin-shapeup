@@ -4,11 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/kandev/kandev/pkg/pluginsdk"
 )
 
 const archiveMethod = "ArchiveTaskExact"
+
+const (
+	// ArchiveTimeout bounds one archive call. Archiving stops the task's
+	// agents and snapshots their worktrees, which can take much longer than a
+	// state read, so every call gets its own budget instead of sharing one.
+	ArchiveTimeout = 25 * time.Second
+	// stateTimeout bounds the state and task reads and writes of one
+	// workspace run, outside the archive calls.
+	stateTimeout = 30 * time.Second
+)
 
 // ErrArchiveFailed wraps the reason a task could not be archived.
 var ErrArchiveFailed = &Error{KindConflict, "The task could not be archived"}
@@ -24,21 +35,36 @@ const (
 
 // RunBreaker enforces the deadline of every indexed workspace. It is safe to
 // run any number of times: it runs on a timer, at plugin start and before
-// every page action.
+// every page action. The lock is taken per workspace, so page actions can run
+// between two slow workspaces instead of waiting for the whole run.
 func (s *Service) RunBreaker(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ids, err := s.store.Workspaces(ctx)
+	ids, err := s.indexedWorkspaces(ctx)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, id := range ids {
-		if err := s.breakWorkspace(ctx, id); err != nil {
+		if err := s.breakIndexedWorkspace(ctx, id); err != nil {
 			errs = append(errs, fmt.Errorf("workspace %s: %w", id, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (s *Service) indexedWorkspaces(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, stateTimeout)
+	defer cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.store.Workspaces(ctx)
+}
+
+func (s *Service) breakIndexedWorkspace(ctx context.Context, workspaceID string) error {
+	ctx, cancel := context.WithTimeout(ctx, stateTimeout)
+	defer cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.breakWorkspace(ctx, workspaceID)
 }
 
 // breakWorkspace cuts every active bet of an overdue cycle and closes it.
@@ -84,6 +110,10 @@ func (s *Service) archive(ctx context.Context, workspaceID, cycleID string, task
 	if task == nil || task.ArchivedAt != nil {
 		return ""
 	}
+	// Detached from the caller: an archive cut short by a page action's
+	// deadline would still complete on the Host, unseen by the plugin.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ArchiveTimeout)
+	defer cancel()
 	exact, ok := pluginsdk.HostV2(s.host)
 	if !ok {
 		return reasonNoExact

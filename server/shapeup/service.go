@@ -257,7 +257,9 @@ func (s *Service) closeArchivedBets(ctx context.Context, workspaceID string, c *
 
 // taskList reads the workspace's tasks, archived ones included, at most once
 // per service call: the list grows with every archived task. Entries are not
-// refreshed after an archive, which callers only use to skip a task.
+// refreshed after an archive, which callers only use to skip a task. So an
+// archive that times out after the host applied it leaves the bet active
+// for this call; the next call sees the task archived and marks it cut.
 type taskList struct {
 	s           *Service
 	workspaceID string

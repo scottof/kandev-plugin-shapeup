@@ -7,7 +7,7 @@ api_version: 2
 version: "0.1.1"
 display_name: "Shape Up"
 description: "Fixed cycles, bets with an appetite and a circuit breaker that cuts unfinished work at the deadline instead of extending it."
-author: "Michele Scotellaro"
+author: "scottof"
 categories: ["tools"]
 
 # 0.97.0 is the only release this plugin has been checked against: it is the
